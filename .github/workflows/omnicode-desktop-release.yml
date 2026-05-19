@@ -35,7 +35,6 @@ jobs:
             os: macos-13
             archive_name: OmniCode-darwin-x64.zip
             build_command: npm run gulp vscode-darwin-x64-min-ci
-            package_shell: bash
             package_command: |
               mkdir -p release
               ditto -c -k --sequesterRsrc --keepParent "../VSCode-darwin-x64" "release/OmniCode-darwin-x64.zip"
@@ -43,7 +42,6 @@ jobs:
             os: macos-14
             archive_name: OmniCode-darwin-arm64.zip
             build_command: npm run gulp vscode-darwin-arm64-min-ci
-            package_shell: bash
             package_command: |
               mkdir -p release
               ditto -c -k --sequesterRsrc --keepParent "../VSCode-darwin-arm64" "release/OmniCode-darwin-arm64.zip"
@@ -51,7 +49,6 @@ jobs:
             os: ubuntu-22.04
             archive_name: OmniCode-linux-x64.tar.gz
             build_command: npm run gulp vscode-linux-x64-min-ci
-            package_shell: bash
             package_command: |
               mkdir -p release
               tar -czf "release/OmniCode-linux-x64.tar.gz" -C .. "VSCode-linux-x64"
@@ -59,8 +56,7 @@ jobs:
             os: windows-2022
             archive_name: OmniCode-win32-x64.zip
             build_command: npm run gulp vscode-win32-x64-min-ci
-            package_shell: pwsh
-            package_command: |
+            package_command_windows: |
               New-Item -ItemType Directory -Force -Path release | Out-Null
               if (Test-Path ".build/win32-x64/VSCode-win32-x64.zip") {
                 Copy-Item ".build/win32-x64/VSCode-win32-x64.zip" "release/OmniCode-win32-x64.zip"
@@ -85,8 +81,14 @@ jobs:
         run: ${{ matrix.build_command }}
 
       - name: Package release artifact
-        shell: ${{ matrix.package_shell }}
+        if: runner.os != 'Windows'
+        shell: bash
         run: ${{ matrix.package_command }}
+
+      - name: Package release artifact (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ${{ matrix.package_command_windows }}
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
