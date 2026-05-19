@@ -8,7 +8,7 @@ import * as http from 'http';
 import * as https from 'https';
 import * as path from 'path';
 import * as vm from 'vm';
-import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
+import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from 'child_process';
 import * as vscode from 'vscode';
 
 type ProviderCategory =
@@ -37,6 +37,31 @@ interface ProviderCatalogEntry {
 	readonly website?: string;
 	readonly deprecated?: boolean;
 	readonly deprecationReason?: string;
+}
+
+interface ProviderSetupGuide {
+	readonly title: string;
+	readonly summary: string;
+	readonly website?: string;
+	readonly credentialPrompt?: string;
+	readonly credentialPlaceholder?: string;
+	readonly callbackPrompt?: string;
+	readonly steps: readonly string[];
+	readonly methods?: readonly ProviderSetupMethod[];
+}
+
+interface ProviderSetupMethod {
+	readonly id: string;
+	readonly label: string;
+	readonly description: string;
+	readonly detail?: string;
+}
+
+interface ListeningProcessInfo {
+	readonly pid: number;
+	readonly ppid?: number;
+	readonly command?: string;
+	readonly cwd?: string;
 }
 
 interface ProviderConnection {
@@ -251,6 +276,17 @@ interface OmniProxySectionData {
 		readonly files: readonly OmniProxyFileItem[];
 	};
 }
+
+type OmniProxyDashboardSectionId =
+	| 'home'
+	| 'providers'
+	| 'combos'
+	| 'batchTesting'
+	| 'costs'
+	| 'analytics'
+	| 'cache'
+	| 'limits'
+	| 'media';
 
 interface OmniProxyEndpointItem {
 	readonly label: string;
@@ -574,6 +610,12 @@ class OmniRouteService implements vscode.Disposable, vscode.TreeDataProvider<Tre
 				await this.connectProvider(providerId);
 				await this.refresh();
 			}),
+			vscode.commands.registerCommand('omniroute.showProviderGuide', async (providerId?: string) => {
+				await this.showProviderGuide(providerId);
+			}),
+			vscode.commands.registerCommand('omniroute.openProviderWebsite', async (providerId?: string) => {
+				await this.openProviderWebsite(providerId);
+			}),
 			vscode.commands.registerCommand('omniroute.syncModels', async () => {
 				await this.syncModels();
 				await this.refresh();
@@ -602,8 +644,8 @@ class OmniRouteService implements vscode.Disposable, vscode.TreeDataProvider<Tre
 				await this.toggleAutoStart();
 				await this.refresh();
 			}),
-			vscode.commands.registerCommand('omniroute.getDashboardData', async () => {
-				return this.getDashboardData();
+			vscode.commands.registerCommand('omniroute.getDashboardData', async (section?: OmniProxyDashboardSectionId) => {
+				return this.getDashboardData(section);
 			}),
 			vscode.commands.registerCommand('omniroute.createApiKey', async () => {
 				await this.createApiKey();
@@ -687,18 +729,28 @@ class OmniRouteService implements vscode.Disposable, vscode.TreeDataProvider<Tre
 		const lockStatus = serverRunning ? await this.ensureLoginDisabled() : undefined;
 		const authUnlocked = !!serverRunning && (lockStatus?.requireLogin === false);
 
-		const connections = authUnlocked ? await this.fetchConnections() : [];
-		const usage = authUnlocked ? await this.fetchUsageStats() : undefined;
-		const proxies = authUnlocked ? await this.fetchProxies() : [];
-		const assignments = authUnlocked ? await this.fetchProxyAssignments() : [];
+		const [
+			connections,
+			usage,
+			proxies,
+			assignments,
+			modelCount,
+			hasAccessKey,
+			lastSync
+		] = await Promise.all([
+			authUnlocked ? this.withDashboardFallback('connections', () => this.fetchConnections(), [] as readonly ProviderConnection[], 5000) : Promise.resolve([]),
+			authUnlocked ? this.withDashboardFallback('usage', () => this.fetchUsageStats(), undefined, 5000) : Promise.resolve(undefined),
+			authUnlocked ? this.withDashboardFallback('proxies', () => this.fetchProxies(), [] as readonly ProxyItem[], 5000) : Promise.resolve([]),
+			authUnlocked ? this.withDashboardFallback('proxy assignments', () => this.fetchProxyAssignments(), [] as readonly ProxyAssignment[], 5000) : Promise.resolve([]),
+			serverRunning ? this.withDashboardFallback('model count', () => this.fetchModelCount(), 0, 5000) : Promise.resolve(0),
+			this.context.secrets.get(OMNIROUTE_SECRET_KEY).then(value => !!value),
+			Promise.resolve(this.context.globalState.get<string>(OMNIROUTE_LAST_SYNC_STORAGE))
+		]);
 		const globalProxyName = assignments
 			.find(item => item.scope === 'global' && item.proxyId)
 			?.proxyId;
 		const globalProxy = globalProxyName ? proxies.find(item => item.id === globalProxyName)?.name : undefined;
-		const modelCount = serverRunning ? await this.fetchModelCount() : 0;
 		const providerCount = new Set(connections.map(connection => connection.provider)).size;
-		const hasAccessKey = !!(await this.context.secrets.get(OMNIROUTE_SECRET_KEY));
-		const lastSync = this.context.globalState.get<string>(OMNIROUTE_LAST_SYNC_STORAGE);
 
 		return {
 			serverRunning,
@@ -718,6 +770,20 @@ class OmniRouteService implements vscode.Disposable, vscode.TreeDataProvider<Tre
 			proxies,
 			globalProxyName: globalProxy,
 		};
+	}
+
+	private async withDashboardFallback<T>(label: string, operation: () => Promise<T>, fallback: T, timeoutMs: number): Promise<T> {
+		try {
+			return await Promise.race([
+				operation(),
+				new Promise<T>((_, reject) => {
+					setTimeout(() => reject(new Error(`Timed out after ${timeoutMs}ms`)), timeoutMs);
+				})
+			]);
+		} catch (error) {
+			this.outputChannel.appendLine(`[${OMNIPROXY_BRAND_NAME}] ${label} request failed during overview refresh: ${error instanceof Error ? error.message : String(error)}`);
+			return fallback;
+		}
 	}
 
 	private buildRootNodes(state: OverviewState): readonly TreeNode[] {
@@ -1043,6 +1109,7 @@ class OmniRouteService implements vscode.Disposable, vscode.TreeDataProvider<Tre
 
 	private async installDependencies(): Promise<void> {
 		await this.runNpmCommand(['install', '--no-audit', '--no-fund']);
+		await this.ensureNativeModuleCompatibility({ forceRebuild: true });
 	}
 
 	private async connectProvider(providerId?: string): Promise<void> {
@@ -1075,7 +1142,13 @@ class OmniRouteService implements vscode.Disposable, vscode.TreeDataProvider<Tre
 			targetProvider = selection.provider;
 		}
 
-		if (targetProvider.category === 'free' || targetProvider.category === 'oauth') {
+		if (targetProvider.id === 'cursor') {
+			await this.connectCursorProvider(targetProvider);
+		} else if (targetProvider.id === 'kiro' || targetProvider.id === 'amazon-q') {
+			await this.connectKiroCompatibleProvider(targetProvider);
+		} else if (targetProvider.id === 'qoder') {
+			await this.connectApiKeyProvider(targetProvider);
+		} else if (targetProvider.category === 'free' || targetProvider.category === 'oauth') {
 			await this.connectOAuthProvider(targetProvider);
 		} else {
 			await this.connectApiKeyProvider(targetProvider);
@@ -1084,7 +1157,628 @@ class OmniRouteService implements vscode.Disposable, vscode.TreeDataProvider<Tre
 		await this.syncModels();
 	}
 
+	private async showProviderGuide(providerId?: string): Promise<void> {
+		const provider = await this.resolveProviderById(providerId);
+		const guide = this.getProviderSetupGuide(provider);
+		const methodLines = guide.methods?.flatMap(method => [
+			`- **${method.label}**: ${method.description}`,
+			method.detail ? `  - ${method.detail}` : undefined
+		].filter((line): line is string => typeof line === 'string')) ?? [];
+		const content = [
+			`# ${guide.title}`,
+			'',
+			guide.summary,
+			'',
+			guide.website ? `Website: ${guide.website}` : undefined,
+			methodLines.length ? '## Supported Setup Methods' : undefined,
+			...methodLines,
+			methodLines.length ? '' : undefined,
+			'## Steps',
+			...guide.steps.map((step, index) => `${index + 1}. ${step}`),
+			guide.credentialPrompt ? ['', `Credential field: ${guide.credentialPrompt}`] : undefined,
+			guide.callbackPrompt ? ['', `Callback field: ${guide.callbackPrompt}`] : undefined,
+		].flat().filter((line): line is string => typeof line === 'string');
+		const document = await vscode.workspace.openTextDocument({
+			language: 'markdown',
+			content: content.join('\n')
+		});
+		await vscode.window.showTextDocument(document, { preview: true, preserveFocus: false });
+	}
+
+	private async openProviderWebsite(providerId?: string): Promise<void> {
+		const provider = await this.resolveProviderById(providerId);
+		const guide = this.getProviderSetupGuide(provider);
+		if (!guide.website) {
+			throw new Error(`No website is configured for ${provider.name}.`);
+		}
+		await vscode.env.openExternal(vscode.Uri.parse(guide.website));
+	}
+
+	private async resolveProviderById(providerId?: string): Promise<ProviderCatalogEntry> {
+		if (!providerId) {
+			throw new Error('A provider id is required.');
+		}
+		const providers = await this.getProviderCatalog();
+		const provider = providers.find(candidate => candidate.id === providerId);
+		if (!provider) {
+			throw new Error(`Could not find OmniProxy provider '${providerId}'.`);
+		}
+		return provider;
+	}
+
+	private async presentProviderSetupDialog(provider: ProviderCatalogEntry, finalActionLabel: string): Promise<void> {
+		const guide = this.getProviderSetupGuide(provider);
+		while (true) {
+			const actions = [finalActionLabel, 'Show Detailed Guide'];
+			if (guide.website) {
+				actions.splice(1, 0, 'Open Website');
+			}
+			const choice = await vscode.window.showInformationMessage(
+				guide.summary,
+				{
+					modal: true,
+					detail: guide.steps.map((step, index) => `${index + 1}. ${step}`).join('\n\n')
+				},
+				...actions
+			);
+			if (!choice) {
+				throw new Error(`Cancelled ${provider.name} setup.`);
+			}
+			if (choice === finalActionLabel) {
+				return;
+			}
+			if (choice === 'Open Website' && guide.website) {
+				await vscode.env.openExternal(vscode.Uri.parse(guide.website));
+				continue;
+			}
+			if (choice === 'Show Detailed Guide') {
+				await this.showProviderGuide(provider.id);
+			}
+		}
+	}
+
+	private getProviderSetupGuide(provider: ProviderCatalogEntry): ProviderSetupGuide {
+		const website = provider.website;
+		switch (provider.id) {
+			case 'chatgpt-web':
+				return {
+					title: 'ChatGPT Web (Plus/Pro) Setup',
+					summary: 'Link your ChatGPT web session by signing in at chatgpt.com and importing the same session cookie OmniRoute expects for ChatGPT Web access.',
+					website,
+					credentialPrompt: 'Paste the `__Secure-next-auth.session-token` cookie value from chatgpt.com. A full Cookie header also works.',
+					credentialPlaceholder: '__Secure-next-auth.session-token=...',
+					methods: [
+						{
+							id: 'web-cookie',
+							label: 'Session Cookie / Cookie Header',
+							description: 'Import the same web session value OmniRoute uses for the ChatGPT Web provider.',
+							detail: 'Accepted values: `__Secure-next-auth.session-token` or the full Cookie header from chatgpt.com.'
+						}
+					],
+					steps: [
+						'Open chatgpt.com in a browser where your Plus or Pro account is already signed in.',
+						'Open browser developer tools, then inspect the `chatgpt.com` cookies under Application/Storage.',
+						'Copy the `__Secure-next-auth.session-token` cookie value. If your browser makes that easier, copy the whole Cookie header instead.',
+						'Return to OmniCode, paste the cookie when asked, then give the connection a name you recognize.',
+						'After the account is added, run model sync so ChatGPT-backed models appear in the model picker.'
+					]
+				};
+			case 'perplexity-web':
+				return {
+					title: 'Perplexity Web (Pro/Max) Setup',
+					summary: 'Link your Perplexity web account by copying the `__Secure-next-auth.session-token` cookie from perplexity.ai.',
+					website,
+					credentialPrompt: 'Paste the `__Secure-next-auth.session-token` cookie value from perplexity.ai. A full Cookie header also works.',
+					credentialPlaceholder: '__Secure-next-auth.session-token=...',
+					methods: [
+						{
+							id: 'web-cookie',
+							label: 'Session Cookie / Cookie Header',
+							description: 'Use the same web session value OmniRoute accepts for the Perplexity Web provider.',
+							detail: 'Accepted values: `__Secure-next-auth.session-token` or the full Cookie header from perplexity.ai.'
+						}
+					],
+					steps: [
+						'Open perplexity.ai and confirm the Pro or Max account is already signed in.',
+						'Use browser developer tools to inspect cookies for `perplexity.ai`.',
+						'Copy the `__Secure-next-auth.session-token` value, or copy the full Cookie header if that is easier.',
+						'Paste that value into OmniCode when prompted and save the connection.'
+					]
+				};
+			case 'grok-web':
+				return {
+					title: 'Grok Web Setup',
+					summary: 'Link your Grok subscription by copying the `sso` cookie value from grok.com.',
+					website,
+					credentialPrompt: 'Paste the `sso` cookie value from grok.com. A full Cookie header also works.',
+					credentialPlaceholder: 'sso=...',
+					methods: [
+						{
+							id: 'web-cookie',
+							label: 'Session Cookie / Cookie Header',
+							description: 'Use the browser session value OmniRoute expects for the Grok Web provider.',
+							detail: 'Accepted values: `sso` or the full Cookie header from grok.com.'
+						}
+					],
+					steps: [
+						'Open grok.com in a browser where the subscribed account is signed in.',
+						'Open browser developer tools and inspect cookies for `grok.com`.',
+						'Copy the `sso` cookie value, or copy the full Cookie header.',
+						'Paste that value into OmniCode and save the account.'
+					]
+				};
+			case 'blackbox-web':
+				return {
+					title: 'Blackbox Web Setup',
+					summary: 'Link your Blackbox subscription by copying the `__Secure-authjs.session-token` cookie from app.blackbox.ai.',
+					website,
+					credentialPrompt: 'Paste the `__Secure-authjs.session-token` cookie value from app.blackbox.ai. A full Cookie header also works.',
+					credentialPlaceholder: '__Secure-authjs.session-token=...',
+					methods: [
+						{
+							id: 'web-cookie',
+							label: 'Session Cookie / Cookie Header',
+							description: 'Import the Blackbox web session exactly the way OmniRoute expects it.',
+							detail: 'Accepted values: `__Secure-authjs.session-token` or the full Cookie header from app.blackbox.ai.'
+						}
+					],
+					steps: [
+						'Open app.blackbox.ai and confirm the subscribed account is signed in.',
+						'Inspect cookies for `app.blackbox.ai` in your browser developer tools.',
+						'Copy the `__Secure-authjs.session-token` cookie value or the full Cookie header.',
+						'Paste it into OmniCode when prompted and save the connection.'
+					]
+				};
+			case 'muse-spark-web':
+				return {
+					title: 'Muse Spark Web (Meta AI) Setup',
+					summary: 'Link Meta AI by copying the `abra_sess` cookie or full Cookie header from meta.ai.',
+					website,
+					credentialPrompt: 'Paste the `abra_sess` cookie value from meta.ai. A full Cookie header also works.',
+					credentialPlaceholder: 'abra_sess=...',
+					methods: [
+						{
+							id: 'web-cookie',
+							label: 'Session Cookie / Cookie Header',
+							description: 'Import the Meta AI web session value OmniRoute uses for Muse Spark Web.',
+							detail: 'Accepted values: `abra_sess` or the full Cookie header from meta.ai.'
+						}
+					],
+					steps: [
+						'Open meta.ai in a browser where the target account is already signed in.',
+						'Inspect cookies for `meta.ai` with developer tools.',
+						'Copy the `abra_sess` cookie value, or copy the whole Cookie header if multiple session cookies are required.',
+						'Paste that into OmniCode and save the connection.'
+					]
+				};
+			case 'cursor':
+				return {
+					title: 'Cursor Setup',
+					summary: 'OmniRoute supports both local Cursor token import and browser OAuth-style flows. OmniCode now exposes the same import-first methods.',
+					website,
+					callbackPrompt: 'Paste the full callback URL or the authorization code returned by Cursor.',
+					methods: [
+						{
+							id: 'cursor-auto-import',
+							label: 'Auto Import from Local Cursor',
+							description: 'Read credentials from Cursor IDE state.vscdb or cursor-agent auth.json on this machine.',
+							detail: 'Source paths come from OmniRoute: Cursor IDE global storage or `~/.config/cursor/auth.json`.'
+						},
+						{
+							id: 'cursor-manual-import',
+							label: 'Manual Token Import',
+							description: 'Paste the Cursor access token and machine ID from the local Cursor database.',
+							detail: 'OmniRoute expects `cursorAuth/accessToken` and `storage.serviceMachineId` from `state.vscdb`.'
+						},
+						{
+							id: 'oauth-browser',
+							label: 'Browser OAuth',
+							description: 'Open the provider login page, approve access, and paste the callback URL or code back into OmniCode.'
+						}
+					],
+					steps: [
+						'If Cursor is installed locally, use Auto Import first so OmniCode reuses the same token Cursor IDE or cursor-agent already stores.',
+						'If auto-import cannot find credentials, open Cursor and confirm you are signed in before trying again.',
+						'For manual import, retrieve `cursorAuth/accessToken` and `storage.serviceMachineId` from the local `state.vscdb` file, then paste both values into OmniCode.',
+						'Use Browser OAuth only if you explicitly want the interactive login flow instead of local credential import.',
+						'After the account is saved, sync models so Cursor-backed models show up in the regular model picker.'
+					]
+				};
+			case 'kiro':
+				return {
+					title: 'Kiro Setup',
+					summary: 'OmniRoute supports AWS SSO token import, manual refresh-token import, Kiro social login, and the device-code login flow for Kiro.',
+					website,
+					callbackPrompt: 'Paste the full `kiro://...` callback URL or the authorization code returned by the Kiro social login flow.',
+					methods: [
+						{
+							id: 'kiro-auto-import',
+							label: 'Auto Import from AWS SSO Cache',
+							description: 'Read the Kiro refresh token from `~/.aws/sso/cache` on this machine.',
+							detail: 'OmniRoute checks `kiro-auth-token.json` first, then scans other AWS SSO cache files for a valid refresh token.'
+						},
+						{
+							id: 'kiro-manual-import',
+							label: 'Manual Refresh Token Import',
+							description: 'Paste the Kiro refresh token yourself and let OmniRoute validate and exchange it.'
+						},
+						{
+							id: 'kiro-social-google',
+							label: 'Google Social Login',
+							description: 'Open OmniRoute’s Kiro social-login URL, complete Google sign-in, and paste the final `kiro://...` callback.'
+						},
+						{
+							id: 'kiro-social-github',
+							label: 'GitHub Social Login',
+							description: 'Open OmniRoute’s Kiro social-login URL, complete GitHub sign-in, and paste the final `kiro://...` callback.'
+						},
+						{
+							id: 'device-code',
+							label: 'Device Login',
+							description: 'Use the OmniRoute device-code flow and finish the verification step in your browser.'
+						}
+					],
+					steps: [
+						'Use Auto Import first if Kiro is already logged in on this machine; OmniRoute reads the AWS SSO cache directly.',
+						'If auto-import does not find a token, use Manual Refresh Token Import and paste the refresh token from the AWS SSO cache.',
+						'For social login, choose Google or GitHub, let OmniCode open the OmniRoute authorization URL, then copy the final `kiro://kiro.kiroAgent/authenticate-success?...` callback URL back into OmniCode.',
+						'Device Login remains available if you want a fully guided verification-code flow instead.',
+						'When the connection succeeds, run model sync so the Kiro-backed models appear in the shared model picker.'
+					]
+				};
+			case 'amazon-q':
+				return {
+					title: 'Amazon Q Setup',
+					summary: 'Amazon Q uses the same OmniRoute Kiro-compatible import flow for AWS Builder ID / AWS SSO tokens, plus the device login flow.',
+					website,
+					methods: [
+						{
+							id: 'kiro-auto-import',
+							label: 'Auto Import from AWS SSO Cache',
+							description: 'Read the Amazon Q refresh token from `~/.aws/sso/cache` on this machine.',
+							detail: 'OmniRoute looks for `amazon-q-auth-token.json` first, then scans the AWS SSO cache for a valid refresh token.'
+						},
+						{
+							id: 'kiro-manual-import',
+							label: 'Manual Refresh Token Import',
+							description: 'Paste the Amazon Q refresh token and let OmniRoute validate it.'
+						},
+						{
+							id: 'device-code',
+							label: 'Device Login',
+							description: 'Use the OmniRoute device-code flow and finish the verification step in your browser.'
+						}
+					],
+					steps: [
+						'If Amazon Q is already logged in locally, use Auto Import first so OmniCode can reuse the AWS SSO refresh token.',
+						'If that fails, paste the refresh token manually from the AWS SSO cache.',
+						'Device Login remains available when you want a fresh interactive flow.',
+						'Sync models after connecting so Amazon Q-backed models show up in the shared model picker.'
+					]
+				};
+			case 'qoder':
+				return {
+					title: 'Qoder Setup',
+					summary: 'OmniRoute treats Qoder browser OAuth as experimental; the stable OmniCode path is to use a Personal Access Token.',
+					website,
+					credentialPrompt: 'Paste the Qoder Personal Access Token.',
+					credentialPlaceholder: 'qdr_...',
+					methods: [
+						{
+							id: 'pat',
+							label: 'Personal Access Token',
+							description: 'Use a PAT instead of browser OAuth. This is the stable OmniRoute path for Qoder today.',
+							detail: 'OmniRoute disables Qoder browser OAuth unless the `QODER_OAUTH_*` environment variables are configured on the runtime.'
+						}
+					],
+					steps: [
+						'Open the Qoder account or token settings page and create a Personal Access Token.',
+						'Copy the token into OmniCode when prompted.',
+						'Save the connection and then sync models if you want the provider models available in the main model picker.'
+					]
+				};
+			case 'github':
+			case 'codex':
+			case 'claude':
+			case 'antigravity':
+			case 'cline':
+			case 'gitlab-duo':
+				return {
+					title: `${provider.name} OAuth Setup`,
+					summary: `OmniCode will open the ${provider.name} authorization page, then you paste the callback URL or auth code back into the native setup flow.`,
+					website,
+					callbackPrompt: `Paste the full callback URL or the authorization code returned by ${provider.name}.`,
+					methods: [
+						{
+							id: 'oauth-browser',
+							label: 'Browser OAuth',
+							description: 'Open the provider login page, approve access, and paste the callback URL or code back into OmniCode.'
+						}
+					],
+					steps: [
+						`Click ${provider.name} connect to let OmniCode open the provider login page.`,
+						'Finish the sign-in and approval flow in your browser.',
+						'If the provider redirects to a callback URL, copy the full final URL from the browser address bar.',
+						'Paste the callback URL or the code value back into OmniCode when prompted.',
+						'After the connection is created, run model sync so the provider models show up in the normal model picker.'
+					]
+				};
+			case 'gemini-cli':
+			case 'qwen':
+			case 'kimi-coding':
+			case 'kilocode':
+				return {
+					title: `${provider.name} Device Login Setup`,
+					summary: `OmniCode will open the ${provider.name} verification page and give you a code to complete the device login flow.`,
+					website,
+					methods: [
+						{
+							id: 'device-code',
+							label: 'Device Login',
+							description: 'OmniCode asks OmniRoute for a device code, opens the verification URL, and polls until the provider approves the login.'
+						}
+					],
+					steps: [
+						`Click connect and wait for OmniCode to open the ${provider.name} verification page.`,
+						'Copy the user code shown by OmniCode if the browser page asks for it.',
+						'Finish the provider login in the browser, then return to OmniCode and confirm the flow is complete.',
+						'OmniCode will poll the provider until the account is linked or the device code expires.'
+					]
+				};
+			default: {
+				const isApiStyle = provider.category === 'apikey' || provider.category === 'search' || provider.category === 'audio' || provider.category === 'upstream-proxy' || provider.category === 'local';
+				return {
+					title: `${provider.name} Setup`,
+					summary: isApiStyle
+						? `Provide the ${provider.name} credential in OmniCode and optionally override the base URL or provider JSON settings.`
+						: `Connect ${provider.name} inside OmniCode using the native setup flow.`,
+					website,
+					credentialPrompt: provider.authHint || provider.apiHint || `Enter the credential for ${provider.name}.`,
+					methods: isApiStyle
+						? [
+							{
+								id: 'credential',
+								label: 'Credential Entry',
+								description: 'Paste the provider credential directly into OmniCode.',
+								detail: provider.authHint || provider.apiHint
+							}
+						]
+						: undefined,
+					steps: isApiStyle
+						? [
+							website ? `Open ${website} and sign in or create the provider credential there.` : `Open the ${provider.name} provider dashboard and create the required credential.`,
+							'Copy the API key, bearer token, session token, or local access secret requested by the provider.',
+							'Paste it into OmniCode when prompted.',
+							'If this provider uses a non-default endpoint, supply the base URL override in the next field.',
+							'Use provider JSON overrides only when you need advanced options such as headers, reasoning defaults, or custom request settings.'
+						]
+						: [
+							'Start the provider connection from OmniCode.',
+							'Follow the provider login or credential flow.',
+							'Complete any browser approval or copy-back step requested by the setup wizard.',
+							'Sync models after connecting if you want them exposed in the standard model picker.'
+						]
+				};
+			}
+		}
+	}
+
+	private async chooseProviderSetupMethod(provider: ProviderCatalogEntry, methods: readonly ProviderSetupMethod[], placeHolder: string): Promise<ProviderSetupMethod | undefined> {
+		type ProviderSetupMethodPick = vscode.QuickPickItem & {
+			readonly actionKind: 'method' | 'guide' | 'website';
+			readonly method?: ProviderSetupMethod;
+		};
+		while (true) {
+			const items: ProviderSetupMethodPick[] = [
+				...methods.map(method => ({
+					label: method.label,
+					description: method.description,
+					detail: method.detail,
+					actionKind: 'method' as const,
+					method
+				})),
+				{
+					label: 'Show Detailed Guide',
+					description: 'Open the full provider setup instructions.',
+					actionKind: 'guide' as const
+				}
+			];
+			if (provider.website) {
+				items.push({
+					label: 'Open Website',
+					description: provider.website,
+					actionKind: 'website'
+				});
+			}
+			const selection = await vscode.window.showQuickPick(items, {
+				title: provider.name,
+				placeHolder,
+				ignoreFocusOut: true
+			});
+			if (!selection) {
+				return undefined;
+			}
+			if (selection.actionKind === 'guide') {
+				await this.showProviderGuide(provider.id);
+				continue;
+			}
+			if (selection.actionKind === 'website' && provider.website) {
+				await this.openProviderWebsite(provider.id);
+				continue;
+			}
+			return selection.method;
+		}
+	}
+
+	private async connectCursorProvider(provider: ProviderCatalogEntry): Promise<void> {
+		const guide = this.getProviderSetupGuide(provider);
+		const methods = guide.methods ?? [];
+		const selected = await this.chooseProviderSetupMethod(
+			provider,
+			methods,
+			'Choose how to connect Cursor'
+		);
+		if (!selected) {
+			return;
+		}
+
+		if (selected.id === 'cursor-auto-import') {
+			const autoImport = await this.requestJson<{
+				readonly found?: boolean;
+				readonly accessToken?: string;
+				readonly machineId?: string;
+				readonly source?: string;
+				readonly error?: string;
+			}>('/api/oauth/cursor/auto-import', 'GET', undefined);
+			if (!autoImport.data.found || !autoImport.data.accessToken) {
+				throw new Error(autoImport.data.error || 'No Cursor credentials were found on this machine.');
+			}
+			await this.requestJson('/api/oauth/cursor/import', 'POST', {
+				accessToken: autoImport.data.accessToken,
+				machineId: autoImport.data.machineId ?? ''
+			});
+			void vscode.window.showInformationMessage(
+				autoImport.data.source
+					? `Cursor credentials imported from ${autoImport.data.source}.`
+					: 'Cursor credentials imported.'
+			);
+			return;
+		}
+
+		if (selected.id === 'cursor-manual-import') {
+			const instructions = await this.requestJson<{
+				readonly instructions?: {
+					readonly title?: string;
+					readonly steps?: readonly string[];
+					readonly alternativeMethod?: readonly string[];
+				};
+			}>('/api/oauth/cursor/import', 'GET', undefined);
+			const detailLines = [
+				...(instructions.data.instructions?.steps ?? []),
+				...(instructions.data.instructions?.alternativeMethod ?? [])
+			];
+			if (detailLines.length) {
+				const readInstructions = await vscode.window.showInformationMessage(
+					instructions.data.instructions?.title || 'Cursor import instructions are available.',
+					{ modal: true, detail: detailLines.join('\n') },
+					'Continue'
+				);
+				if (!readInstructions) {
+					return;
+				}
+			}
+
+			const accessToken = await vscode.window.showInputBox({
+				title: provider.name,
+				prompt: 'Paste Cursor access token (`cursorAuth/accessToken`).',
+				password: true,
+				ignoreFocusOut: true
+			});
+			if (!accessToken) {
+				return;
+			}
+			const machineId = await vscode.window.showInputBox({
+				title: provider.name,
+				prompt: 'Paste Cursor machine ID (`storage.serviceMachineId`).',
+				ignoreFocusOut: true
+			});
+			if (!machineId) {
+				return;
+			}
+			await this.requestJson('/api/oauth/cursor/import', 'POST', {
+				accessToken,
+				machineId
+			});
+			return;
+		}
+
+		await this.connectOAuthProvider(provider);
+	}
+
+	private async connectKiroCompatibleProvider(provider: ProviderCatalogEntry): Promise<void> {
+		const guide = this.getProviderSetupGuide(provider);
+		const methods = guide.methods ?? [];
+		const selected = await this.chooseProviderSetupMethod(
+			provider,
+			methods,
+			provider.id === 'amazon-q' ? 'Choose how to connect Amazon Q' : 'Choose how to connect Kiro'
+		);
+		if (!selected) {
+			return;
+		}
+
+		if (selected.id === 'kiro-auto-import') {
+			const query = provider.id === 'amazon-q' ? '?targetProvider=amazon-q' : '';
+			const autoImport = await this.requestJson<{
+				readonly found?: boolean;
+				readonly refreshToken?: string;
+				readonly source?: string;
+				readonly error?: string;
+			}>(`/api/oauth/kiro/auto-import${query}`, 'GET', undefined);
+			if (!autoImport.data.found || !autoImport.data.refreshToken) {
+				throw new Error(autoImport.data.error || `No ${provider.name} credentials were found on this machine.`);
+			}
+			await this.requestJson(`/api/oauth/kiro/import${query}`, 'POST', {
+				refreshToken: autoImport.data.refreshToken
+			});
+			void vscode.window.showInformationMessage(
+				autoImport.data.source
+					? `${provider.name} credentials imported from ${autoImport.data.source}.`
+					: `${provider.name} credentials imported.`
+			);
+			return;
+		}
+
+		if (selected.id === 'kiro-manual-import') {
+			const refreshToken = await vscode.window.showInputBox({
+				title: provider.name,
+				prompt: `Paste the ${provider.name} refresh token from the AWS SSO cache.`,
+				password: true,
+				ignoreFocusOut: true
+			});
+			if (!refreshToken) {
+				return;
+			}
+			const query = provider.id === 'amazon-q' ? '?targetProvider=amazon-q' : '';
+			await this.requestJson(`/api/oauth/kiro/import${query}`, 'POST', {
+				refreshToken
+			});
+			return;
+		}
+
+		if (selected.id === 'kiro-social-google' || selected.id === 'kiro-social-github') {
+			const socialProvider = selected.id.endsWith('google') ? 'google' : 'github';
+			const authData = await this.requestJson<{
+				readonly authUrl: string;
+				readonly codeVerifier: string;
+				readonly state: string;
+			}>(`/api/oauth/kiro/social-authorize?provider=${encodeURIComponent(socialProvider)}`, 'GET', undefined);
+			await vscode.env.openExternal(vscode.Uri.parse(authData.data.authUrl));
+			const callbackInput = await vscode.window.showInputBox({
+				title: provider.name,
+				prompt: `Paste the full kiro:// callback URL or code returned by ${socialProvider}.`,
+				ignoreFocusOut: true
+			});
+			if (!callbackInput) {
+				return;
+			}
+			const parsed = this.parseOAuthCallbackInput(callbackInput, authData.data.state);
+			if (!parsed.code) {
+				throw new Error('No authorization code was found in the callback input.');
+			}
+			await this.requestJson('/api/oauth/kiro/social-exchange', 'POST', {
+				code: parsed.code,
+				codeVerifier: authData.data.codeVerifier,
+				provider: socialProvider
+			});
+			return;
+		}
+
+		await this.connectOAuthProvider(provider);
+	}
+
 	private async connectOAuthProvider(provider: ProviderCatalogEntry): Promise<void> {
+		await this.presentProviderSetupDialog(provider, 'Continue Setup');
 		if (DEVICE_CODE_PROVIDERS.has(provider.id)) {
 			const deviceData = await this.requestJson<{
 				readonly device_code: string;
@@ -1134,7 +1828,7 @@ class OmniRouteService implements vscode.Disposable, vscode.TreeDataProvider<Tre
 
 		const callbackInput = await vscode.window.showInputBox({
 			title: provider.name,
-			prompt: vscode.l10n.t('Paste the callback URL or authentication code for {0}', provider.name),
+			prompt: this.getProviderSetupGuide(provider).callbackPrompt || vscode.l10n.t('Paste the callback URL or authentication code for {0}', provider.name),
 			ignoreFocusOut: true
 		});
 		if (!callbackInput) {
@@ -1155,9 +1849,12 @@ class OmniRouteService implements vscode.Disposable, vscode.TreeDataProvider<Tre
 	}
 
 	private async connectApiKeyProvider(provider: ProviderCatalogEntry): Promise<void> {
+		await this.presentProviderSetupDialog(provider, 'Continue Setup');
+		const guide = this.getProviderSetupGuide(provider);
 		const secret = await vscode.window.showInputBox({
 			title: provider.name,
-			prompt: provider.authHint || provider.apiHint || vscode.l10n.t('Enter the credential for {0}', provider.name),
+			prompt: guide.credentialPrompt || provider.authHint || provider.apiHint || vscode.l10n.t('Enter the credential for {0}', provider.name),
+			placeHolder: guide.credentialPlaceholder,
 			password: true,
 			ignoreFocusOut: true
 		});
@@ -2019,7 +2716,9 @@ class OmniRouteService implements vscode.Disposable, vscode.TreeDataProvider<Tre
 	}
 
 	private resolveRuntimeSecretOverrides(): NodeJS.ProcessEnv {
-		const overrides: NodeJS.ProcessEnv = {};
+		const overrides: NodeJS.ProcessEnv = {
+			DATA_DIR: this.getRuntimeDataDir()
+		};
 		const storageEncryptionKey = this.resolveEnvValue('STORAGE_ENCRYPTION_KEY');
 		if (storageEncryptionKey) {
 			overrides.STORAGE_ENCRYPTION_KEY = storageEncryptionKey;
@@ -2051,7 +2750,10 @@ class OmniRouteService implements vscode.Disposable, vscode.TreeDataProvider<Tre
 
 	private getRuntimeEnvCandidateFiles(): readonly string[] {
 		const homeDir = process.env.HOME;
+		const runtimeDataDir = this.getRuntimeDataDir();
 		return [
+			path.join(runtimeDataDir, 'server.env'),
+			path.join(runtimeDataDir, '.env'),
 			path.join(this.omniRouteRoot, '.env'),
 			this.workspaceRoot ? path.join(this.workspaceRoot, 'OmniRoute-main', '.env') : undefined,
 			path.join(this.repoRoot, 'OmniRoute-main', '.env'),
@@ -2079,193 +2781,197 @@ class OmniRouteService implements vscode.Disposable, vscode.TreeDataProvider<Tre
 		return rawValue.replace(/^['"]|['"]$/g, '');
 	}
 
-	private async fetchSectionData(state: OverviewState): Promise<OmniProxySectionData> {
-		const endpoints = await this.fetchEndpointsSection();
+	private getRuntimeDataDir(): string {
+		return path.join(this.context.globalStorageUri.fsPath, 'runtime-data');
+	}
+
+	private createEmptySectionData(): OmniProxySectionData {
+		return {
+			endpoints: {
+				items: []
+			},
+			apiManager: { keys: [], aliases: [] },
+			providers: { connections: [], nodes: [], metrics: [] },
+			combos: { items: [], mappings: [], metrics: [] },
+			batchTesting: { batches: [], files: [] },
+			costs: { byProvider: [], byModel: [] },
+			analytics: { providerMetrics: [] },
+			cache: {},
+			limits: { quotas: [], sessions: [] },
+			media: { memories: [], files: [] }
+		};
+	}
+
+	private async fetchSectionData(state: OverviewState, section: OmniProxyDashboardSectionId | undefined): Promise<OmniProxySectionData> {
+		const sections = this.createEmptySectionData();
 		if (!state.authUnlocked) {
-			return {
-				endpoints,
-				apiManager: { keys: [], aliases: [] },
-				providers: { connections: [], nodes: [], metrics: [] },
-				combos: { items: [], mappings: [], metrics: [] },
-				batchTesting: { batches: [], files: [] },
-				costs: { byProvider: [], byModel: [] },
-				analytics: { providerMetrics: [] },
-				cache: {},
-				limits: { quotas: [], sessions: [] },
-				media: { memories: [], files: [] }
-			};
+			return sections;
 		}
 
-		const [
-			keysResult,
-			aliasesResult,
-			nodesResult,
-			combosResult,
-			mappingsResult,
-			comboMetricsResult,
-			batchesResult,
-			filesResult,
-			costsResult,
-			providerMetricsResult,
-			compressionResult,
-			cacheResult,
-			cacheMetricsResult,
-			cacheConfigResult,
-			quotaResult,
-			rateLimitsResult,
-			sessionsResult,
-			tokenHealthResult,
-			memorySettingsResult,
-			memoryHealthResult,
-			memoriesResult
-		] = await Promise.allSettled([
-			this.requestData<{ readonly keys?: readonly OmniProxyApiKeyItem[] }>('/api/keys'),
-			this.requestData<{ readonly builtIn?: Record<string, string>; readonly custom?: Record<string, string> }>('/api/settings/model-aliases'),
-			this.requestData<{ readonly nodes?: readonly OmniProxyProviderNodeItem[] }>('/api/provider-nodes'),
-			this.requestData<{ readonly combos?: readonly OmniProxyComboItem[] }>('/api/combos'),
-			this.requestData<{ readonly mappings?: readonly OmniProxyComboMappingItem[] }>('/api/model-combo-mappings'),
-			this.requestData<{ readonly metrics?: Record<string, JsonObject> }>('/api/combos/metrics'),
-			this.requestData<{ readonly batches?: readonly OmniProxyBatchItem[] }>('/api/batches?limit=20'),
-			this.requestData<{ readonly files?: readonly OmniProxyFileItem[] }>('/api/files?limit=20'),
-			this.requestData<{
-				readonly summary?: OmniProxyUsageAnalyticsSummary;
-				readonly byProvider?: readonly { readonly provider: string; readonly requests: number; readonly totalTokens: number; readonly cost: number }[];
-				readonly byModel?: readonly { readonly model: string; readonly requests: number; readonly totalTokens: number; readonly cost: number }[];
-			}>('/api/usage/analytics?range=30d&presets=1d,7d,30d'),
-			this.requestData<{ readonly metrics?: Record<string, OmniProxyProviderMetricItem> }>('/api/provider-metrics'),
-			this.requestData<JsonObject>('/api/analytics/compression?since=7d'),
-			this.requestData<JsonObject>('/api/cache?trendHours=24'),
-			this.requestData<JsonObject>('/api/settings/cache-metrics'),
-			this.requestData<JsonObject>('/api/settings/cache-config'),
-			this.requestData<{ readonly providers?: readonly OmniProxyQuotaItem[] }>('/api/usage/quota'),
-			this.requestData<{
-				readonly connections?: readonly OmniProxyRateLimitConnectionItem[];
-				readonly lockouts?: readonly JsonObject[];
-				readonly cacheStats?: JsonObject;
-				readonly overview?: JsonObject;
-			}>('/api/rate-limits'),
-			this.requestData<{ readonly sessions?: readonly OmniProxySessionItem[] }>('/api/sessions'),
-			this.requestData<OmniProxyTokenHealth>('/api/token-health'),
-			this.requestData<JsonObject>('/api/settings/memory'),
-			this.requestData<JsonObject>('/api/memory/health'),
-			this.requestData<{ readonly data?: readonly OmniProxyMemoryItem[] }>('/api/memory?limit=20')
-		]);
-
-		const aliases = this.toAliasItems(this.getSettledValue(aliasesResult));
-		const comboMetrics = this.toComboMetricItems(this.getSettledValue(comboMetricsResult));
-		const providerMetrics = this.toProviderMetricItems(this.getSettledValue(providerMetricsResult));
-		const costs = this.getSettledValue(costsResult);
-		const tokenHealth = this.getSettledValue(tokenHealthResult);
-
-		return {
-			endpoints,
-			apiManager: {
-				keys: this.getSettledValue(keysResult)?.keys ?? [],
-				aliases
-			},
-			providers: {
-				connections: state.connections.map(connection => ({
-					id: connection.id,
-					provider: connection.provider,
-					name: connection.name,
-					email: connection.email,
-					displayName: connection.displayName,
-					authType: connection.authType,
-					isActive: connection.isActive,
-					defaultModel: connection.defaultModel,
-					testStatus: connection.testStatus,
-					lastError: connection.lastError,
-					lastTested: connection.lastTested,
-					rateLimitProtection: (connection as ProviderConnection & { readonly rateLimitProtection?: boolean }).rateLimitProtection
-				})),
-				nodes: this.getSettledValue(nodesResult)?.nodes ?? [],
-				metrics: providerMetrics,
-				tokenHealth
-			},
-			combos: {
-				items: this.getSettledValue(combosResult)?.combos ?? [],
-				mappings: this.getSettledValue(mappingsResult)?.mappings ?? [],
-				metrics: comboMetrics
-			},
-			batchTesting: {
-				batches: this.getSettledValue(batchesResult)?.batches ?? [],
-				files: this.getSettledValue(filesResult)?.files ?? []
-			},
-			costs: {
-				summary: costs?.summary,
-				byProvider: (costs?.byProvider ?? []).map(item => ({
-					label: item.provider,
-					requests: item.requests,
-					totalTokens: item.totalTokens,
-					cost: item.cost
-				})),
-				byModel: (costs?.byModel ?? []).map(item => ({
-					label: item.model,
-					requests: item.requests,
-					totalTokens: item.totalTokens,
-					cost: item.cost
-				}))
-			},
-			analytics: {
-				providerMetrics,
-				tokenHealth,
-				compression: this.getSettledValue(compressionResult)
-			},
-			cache: {
-				stats: this.getSettledValue(cacheResult),
-				metrics: this.getSettledValue(cacheMetricsResult),
-				config: this.getSettledValue(cacheConfigResult)
-			},
-			limits: {
-				quotas: this.getSettledValue(quotaResult)?.providers ?? [],
-				rateLimits: {
-					connections: this.getSettledValue(rateLimitsResult)?.connections ?? [],
-					lockouts: this.getSettledValue(rateLimitsResult)?.lockouts ?? [],
-					cacheStats: this.getSettledValue(rateLimitsResult)?.cacheStats,
-					overview: this.getSettledValue(rateLimitsResult)?.overview
-				},
-				sessions: this.getSettledValue(sessionsResult)?.sessions ?? []
-			},
-			media: {
-				memorySettings: this.getSettledValue(memorySettingsResult),
-				memoryHealth: this.getSettledValue(memoryHealthResult),
-				memories: this.getSettledValue(memoriesResult)?.data ?? [],
-				files: this.getSettledValue(filesResult)?.files ?? []
+		switch (section) {
+			case undefined:
+			case 'home':
+				return sections;
+			case 'providers': {
+				const [nodesResult, providerMetricsResult, tokenHealthResult] = await Promise.allSettled([
+					this.requestData<{ readonly nodes?: readonly OmniProxyProviderNodeItem[] }>('/api/provider-nodes', 8000),
+					this.requestData<{ readonly metrics?: Record<string, OmniProxyProviderMetricItem> }>('/api/provider-metrics', 8000),
+					this.requestData<OmniProxyTokenHealth>('/api/token-health', 8000)
+				]);
+				return {
+					...sections,
+					providers: {
+					connections: state.connections.map(connection => ({
+						id: connection.id,
+						provider: connection.provider,
+						name: connection.name,
+						email: connection.email,
+						displayName: connection.displayName,
+						authType: connection.authType,
+						isActive: connection.isActive,
+						defaultModel: connection.defaultModel,
+						testStatus: connection.testStatus,
+						lastError: connection.lastError,
+						lastTested: connection.lastTested,
+						rateLimitProtection: (connection as ProviderConnection & { readonly rateLimitProtection?: boolean }).rateLimitProtection
+					})),
+					nodes: this.getSettledValue(nodesResult)?.nodes ?? [],
+					metrics: this.toProviderMetricItems(this.getSettledValue(providerMetricsResult)),
+					tokenHealth: this.getSettledValue(tokenHealthResult)
+					}
+				};
 			}
-		};
+			case 'combos': {
+				const [combosResult, mappingsResult, comboMetricsResult] = await Promise.allSettled([
+					this.requestData<{ readonly combos?: readonly OmniProxyComboItem[] }>('/api/combos', 8000),
+					this.requestData<{ readonly mappings?: readonly OmniProxyComboMappingItem[] }>('/api/model-combo-mappings', 8000),
+					this.requestData<{ readonly metrics?: Record<string, JsonObject> }>('/api/combos/metrics', 8000)
+				]);
+				return {
+					...sections,
+					combos: {
+						items: this.getSettledValue(combosResult)?.combos ?? [],
+						mappings: this.getSettledValue(mappingsResult)?.mappings ?? [],
+						metrics: this.toComboMetricItems(this.getSettledValue(comboMetricsResult))
+					}
+				};
+			}
+			case 'batchTesting': {
+				const [batchesResult, filesResult] = await Promise.allSettled([
+					this.requestData<{ readonly batches?: readonly OmniProxyBatchItem[] }>('/api/batches?limit=20', 8000),
+					this.requestData<{ readonly files?: readonly OmniProxyFileItem[] }>('/api/files?limit=20', 8000)
+				]);
+				return {
+					...sections,
+					batchTesting: {
+						batches: this.getSettledValue(batchesResult)?.batches ?? [],
+						files: this.getSettledValue(filesResult)?.files ?? []
+					}
+				};
+			}
+			case 'costs': {
+				const costsResult = await this.requestData<{
+					readonly summary?: OmniProxyUsageAnalyticsSummary;
+					readonly byProvider?: readonly { readonly provider: string; readonly requests: number; readonly totalTokens: number; readonly cost: number }[];
+					readonly byModel?: readonly { readonly model: string; readonly requests: number; readonly totalTokens: number; readonly cost: number }[];
+				}>('/api/usage/analytics?range=30d&presets=1d,7d,30d', 8000);
+				return {
+					...sections,
+					costs: {
+						summary: costsResult?.summary,
+						byProvider: (costsResult?.byProvider ?? []).map(item => ({
+							label: item.provider,
+							requests: item.requests,
+							totalTokens: item.totalTokens,
+							cost: item.cost
+						})),
+						byModel: (costsResult?.byModel ?? []).map(item => ({
+							label: item.model,
+							requests: item.requests,
+							totalTokens: item.totalTokens,
+							cost: item.cost
+						}))
+					}
+				};
+			}
+			case 'analytics': {
+				const [providerMetricsResult, tokenHealthResult, compressionResult] = await Promise.allSettled([
+					this.requestData<{ readonly metrics?: Record<string, OmniProxyProviderMetricItem> }>('/api/provider-metrics', 8000),
+					this.requestData<OmniProxyTokenHealth>('/api/token-health', 8000),
+					this.requestData<JsonObject>('/api/analytics/compression?since=7d', 8000)
+				]);
+				return {
+					...sections,
+					analytics: {
+						providerMetrics: this.toProviderMetricItems(this.getSettledValue(providerMetricsResult)),
+						tokenHealth: this.getSettledValue(tokenHealthResult),
+						compression: this.getSettledValue(compressionResult)
+					}
+				};
+			}
+			case 'cache': {
+				const [cacheResult, cacheMetricsResult, cacheConfigResult] = await Promise.allSettled([
+					this.requestData<JsonObject>('/api/cache?trendHours=24', 8000),
+					this.requestData<JsonObject>('/api/settings/cache-metrics', 8000),
+					this.requestData<JsonObject>('/api/settings/cache-config', 8000)
+				]);
+				return {
+					...sections,
+					cache: {
+						stats: this.getSettledValue(cacheResult),
+						metrics: this.getSettledValue(cacheMetricsResult),
+						config: this.getSettledValue(cacheConfigResult)
+					}
+				};
+			}
+			case 'limits': {
+				const [quotaResult, rateLimitsResult, sessionsResult] = await Promise.allSettled([
+					this.requestData<{ readonly providers?: readonly OmniProxyQuotaItem[] }>('/api/usage/quota', 8000),
+					this.requestData<{
+						readonly connections?: readonly OmniProxyRateLimitConnectionItem[];
+						readonly lockouts?: readonly JsonObject[];
+						readonly cacheStats?: JsonObject;
+						readonly overview?: JsonObject;
+					}>('/api/rate-limits', 8000),
+					this.requestData<{ readonly sessions?: readonly OmniProxySessionItem[] }>('/api/sessions', 8000)
+				]);
+				return {
+					...sections,
+					limits: {
+						quotas: this.getSettledValue(quotaResult)?.providers ?? [],
+						rateLimits: {
+							connections: this.getSettledValue(rateLimitsResult)?.connections ?? [],
+							lockouts: this.getSettledValue(rateLimitsResult)?.lockouts ?? [],
+							cacheStats: this.getSettledValue(rateLimitsResult)?.cacheStats,
+							overview: this.getSettledValue(rateLimitsResult)?.overview
+						},
+						sessions: this.getSettledValue(sessionsResult)?.sessions ?? []
+					}
+				};
+			}
+			case 'media': {
+				const [filesResult, memorySettingsResult, memoryHealthResult, memoriesResult] = await Promise.allSettled([
+					this.requestData<{ readonly files?: readonly OmniProxyFileItem[] }>('/api/files?limit=20', 8000),
+					this.requestData<JsonObject>('/api/settings/memory', 8000),
+					this.requestData<JsonObject>('/api/memory/health', 8000),
+					this.requestData<{ readonly data?: readonly OmniProxyMemoryItem[] }>('/api/memory?limit=20', 8000)
+				]);
+				return {
+					...sections,
+					media: {
+						memorySettings: this.getSettledValue(memorySettingsResult),
+						memoryHealth: this.getSettledValue(memoryHealthResult),
+						memories: this.getSettledValue(memoriesResult)?.data ?? [],
+						files: this.getSettledValue(filesResult)?.files ?? []
+					}
+				};
+			}
+		}
 	}
 
-	private async fetchEndpointsSection(): Promise<OmniProxySectionData['endpoints']> {
-		const settings = await this.requestData<{
-			readonly runtimePorts?: { readonly apiPort?: number; readonly dashboardPort?: number };
-			readonly apiPort?: number;
-			readonly dashboardPort?: number;
-			readonly machineId?: string;
-			readonly cloudConfigured?: boolean;
-			readonly cloudUrl?: string | null;
-		}>('/api/settings');
-		const baseUrl = this.getBaseUrl();
-		const base = baseUrl.toString().replace(/\/$/, '');
-		return {
-			machineId: settings?.machineId,
-			apiPort: settings?.runtimePorts?.apiPort ?? settings?.apiPort,
-			dashboardPort: settings?.runtimePorts?.dashboardPort ?? settings?.dashboardPort,
-			cloudConfigured: settings?.cloudConfigured,
-			cloudUrl: settings?.cloudUrl,
-			items: [
-				{ label: 'Models', category: 'OpenAI', path: '/v1/models', fullUrl: `${base}/v1/models`, description: 'Model discovery for Custom Endpoint sync and manual configuration.' },
-				{ label: 'Chat Completions', category: 'OpenAI', path: '/v1/chat/completions', fullUrl: `${base}/v1/chat/completions`, description: 'Primary chat routing endpoint.' },
-				{ label: 'Embeddings', category: 'OpenAI', path: '/v1/embeddings', fullUrl: `${base}/v1/embeddings`, description: 'Embedding and retrieval workloads.' },
-				{ label: 'MCP SSE', category: 'MCP', path: '/api/mcp/sse', fullUrl: `${base}/api/mcp/sse`, description: 'Remote MCP Server-Sent Events transport.' },
-				{ label: 'MCP Stream', category: 'MCP', path: '/api/mcp/stream', fullUrl: `${base}/api/mcp/stream`, description: 'Remote streamable HTTP transport.' },
-				{ label: 'Callback', category: 'OAuth', path: '/callback', fullUrl: `${base}/callback`, description: 'OAuth callback for local provider sign-ins.' }
-			]
-		};
-	}
-
-	private async requestData<T>(routePath: string): Promise<T | undefined> {
+	private async requestData<T>(routePath: string, timeoutMs = 30000): Promise<T | undefined> {
 		try {
-			const response = await this.requestJson<T>(routePath, 'GET', undefined);
+			const response = await this.requestJson<T>(routePath, 'GET', undefined, undefined, false, timeoutMs);
 			return response.data;
 		} catch (error) {
 			this.outputChannel.appendLine(`[${OMNIPROXY_BRAND_NAME}] data request failed for ${routePath}: ${error instanceof Error ? error.message : String(error)}`);
@@ -2275,15 +2981,6 @@ class OmniRouteService implements vscode.Disposable, vscode.TreeDataProvider<Tre
 
 	private getSettledValue<T>(result: PromiseSettledResult<T | undefined>): T | undefined {
 		return result.status === 'fulfilled' ? result.value : undefined;
-	}
-
-	private toAliasItems(result: { readonly builtIn?: Record<string, string>; readonly custom?: Record<string, string> } | undefined): readonly OmniProxyModelAliasItem[] {
-		if (!result) {
-			return [];
-		}
-		const builtIn = Object.entries(result.builtIn ?? {}).map(([from, to]) => ({ from, to, builtIn: true }));
-		const custom = Object.entries(result.custom ?? {}).map(([from, to]) => ({ from, to, builtIn: false }));
-		return [...custom, ...builtIn].sort((left, right) => left.from.localeCompare(right.from));
 	}
 
 	private toProviderMetricItems(result: { readonly metrics?: Record<string, OmniProxyProviderMetricItem> } | undefined): readonly OmniProxyProviderMetricItem[] {
@@ -2307,10 +3004,10 @@ class OmniRouteService implements vscode.Disposable, vscode.TreeDataProvider<Tre
 		})).sort((left, right) => right.requests - left.requests);
 	}
 
-	private async getDashboardData(): Promise<OmniProxyDashboardData> {
+	private async getDashboardData(section?: OmniProxyDashboardSectionId): Promise<OmniProxyDashboardData> {
 		const state = this.currentState ?? await this.refreshState();
 		const catalog = await this.getProviderCatalog();
-		const sections = await this.fetchSectionData(state);
+		const sections = await this.fetchSectionData(state, section);
 		const providerSummaries = catalog.map(provider => {
 			const connections = state.connections.filter(connection => connection.provider === provider.id);
 			const labels = connections.map(connection => this.getConnectionLabel(connection)).filter((value, index, array) => !!value && array.indexOf(value) === index);
@@ -2409,6 +3106,8 @@ class OmniRouteService implements vscode.Disposable, vscode.TreeDataProvider<Tre
 			return true;
 		}
 
+		await this.recoverStalePortListener();
+
 		const autoStart = vscode.workspace.getConfiguration('omniroute').get<boolean>('autoStart', true);
 		if (!autoStart && options.silent) {
 			return false;
@@ -2421,7 +3120,9 @@ class OmniRouteService implements vscode.Disposable, vscode.TreeDataProvider<Tre
 		}
 
 		await this.recoverStaleNextDevServer();
+		await this.ensureNativeModuleCompatibility();
 		const runtimeSecretOverrides = this.resolveRuntimeSecretOverrides();
+		fs.mkdirSync(this.getRuntimeDataDir(), { recursive: true });
 		if (runtimeSecretOverrides.STORAGE_ENCRYPTION_KEY) {
 			this.outputChannel.appendLine(`[${OMNIPROXY_BRAND_NAME}] reusing existing storage encryption key for embedded runtime`);
 		}
@@ -2470,6 +3171,63 @@ class OmniRouteService implements vscode.Disposable, vscode.TreeDataProvider<Tre
 		return false;
 	}
 
+	private async ensureNativeModuleCompatibility(options?: { readonly forceRebuild?: boolean }): Promise<void> {
+		if (!this.dependenciesInstalled()) {
+			return;
+		}
+
+		if (!options?.forceRebuild && await this.canLoadBetterSqlite()) {
+			return;
+		}
+
+		this.outputChannel.appendLine(`[${OMNIPROXY_BRAND_NAME}] rebuilding better-sqlite3 for ${this.getNodePath()}`);
+		await this.runNpmCommand(['rebuild', 'better-sqlite3']);
+
+		if (!await this.canLoadBetterSqlite()) {
+			throw new Error(`Failed to rebuild better-sqlite3 for ${OMNIPROXY_BRAND_NAME}.`);
+		}
+	}
+
+	private async canLoadBetterSqlite(): Promise<boolean> {
+		const exitCode = await this.runNodeCommand(['-e', 'require("better-sqlite3");'], { logOutput: false });
+		return exitCode === 0;
+	}
+
+	private async runNodeCommand(args: readonly string[], options?: { readonly logOutput?: boolean }): Promise<number> {
+		return new Promise<number>(resolve => {
+			const processHandle = spawn(this.getNodePath(), args, {
+				cwd: this.omniRouteRoot,
+				env: {
+					...process.env,
+					...this.resolveRuntimeSecretOverrides(),
+					PATH: `${path.dirname(this.getNodePath())}${path.delimiter}${process.env.PATH ?? ''}`
+				},
+				stdio: 'pipe'
+			});
+
+			const logOutput = options?.logOutput !== false;
+			processHandle.stdout.on('data', chunk => {
+				if (logOutput) {
+					this.outputChannel.append(chunk.toString());
+				}
+			});
+			processHandle.stderr.on('data', chunk => {
+				if (logOutput) {
+					this.outputChannel.append(chunk.toString());
+				}
+			});
+			processHandle.on('error', error => {
+				if (logOutput) {
+					this.outputChannel.appendLine(`[${OMNIPROXY_BRAND_NAME}] ${error instanceof Error ? error.message : String(error)}`);
+				}
+				resolve(-1);
+			});
+			processHandle.on('exit', code => {
+				resolve(code ?? -1);
+			});
+		});
+	}
+
 	private async isServerReachable(): Promise<boolean> {
 		try {
 			await this.requestJson('/api/auth/status', 'GET', undefined, undefined, false);
@@ -2494,6 +3252,27 @@ class OmniRouteService implements vscode.Disposable, vscode.TreeDataProvider<Tre
 		await this.removeNextDevLock();
 	}
 
+	private async recoverStalePortListener(): Promise<void> {
+		const info = this.findListeningProcessInfo(Number(this.getBaseUrl().port));
+		if (!info?.pid) {
+			return;
+		}
+
+		const command = info.command ?? '';
+		const cwd = info.cwd ?? '';
+		const looksLikeOmniRuntime = /run-next\.mjs|npm run dev/.test(command) || /OmniRoute-main|omniroute-runtime/.test(cwd);
+		if (!looksLikeOmniRuntime) {
+			return;
+		}
+
+		this.outputChannel.appendLine(`[${OMNIPROXY_BRAND_NAME}] reclaiming port ${this.getBaseUrl().port} from stale runtime pid ${info.pid}${cwd ? ` (${cwd})` : ''}`);
+		await this.terminateProcess(info.pid);
+		if (info.ppid && info.ppid !== info.pid) {
+			await this.terminateProcess(info.ppid);
+		}
+		await this.removeNextDevLock();
+	}
+
 	private async readNextDevLock(): Promise<NextDevLockFile | undefined> {
 		const lockPath = path.join(this.omniRouteRoot, '.next', 'dev', 'lock');
 		try {
@@ -2511,6 +3290,35 @@ class OmniRouteService implements vscode.Disposable, vscode.TreeDataProvider<Tre
 			await fs.promises.unlink(lockPath);
 		} catch {
 			// Ignore missing lock files. Next will recreate this on a clean boot.
+		}
+	}
+
+	private findListeningProcessInfo(port: number): ListeningProcessInfo | undefined {
+		if (process.platform === 'win32') {
+			return undefined;
+		}
+
+		try {
+			const pidOutput = execFileSync('lsof', ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN', '-Fp'], { encoding: 'utf8' }).trim();
+			const pid = Number.parseInt(pidOutput.split('\n').find(line => line.startsWith('p'))?.slice(1) ?? '', 10);
+			if (!Number.isFinite(pid) || pid <= 0) {
+				return undefined;
+			}
+
+			const cwdOutput = execFileSync('lsof', ['-a', '-p', String(pid), '-d', 'cwd', '-Fn'], { encoding: 'utf8' }).trim();
+			const cwd = cwdOutput.split('\n').find(line => line.startsWith('n'))?.slice(1);
+			const command = execFileSync('ps', ['-p', String(pid), '-o', 'command='], { encoding: 'utf8' }).trim() || undefined;
+			const ppidRaw = execFileSync('ps', ['-p', String(pid), '-o', 'ppid='], { encoding: 'utf8' }).trim();
+			const ppid = Number.parseInt(ppidRaw, 10);
+
+			return {
+				pid,
+				ppid: Number.isFinite(ppid) && ppid > 0 ? ppid : undefined,
+				command,
+				cwd: cwd?.trim() || undefined
+			};
+		} catch {
+			return undefined;
 		}
 	}
 
@@ -2579,7 +3387,7 @@ class OmniRouteService implements vscode.Disposable, vscode.TreeDataProvider<Tre
 		});
 	}
 
-	private async requestJson<T>(routePath: string, method: string, body: JsonValue | undefined, bearerToken?: string, _allowSetCookie = false): Promise<HttpResponse<T>> {
+	private async requestJson<T>(routePath: string, method: string, body: JsonValue | undefined, bearerToken?: string, _allowSetCookie = false, timeoutMs = 30000): Promise<HttpResponse<T>> {
 		const url = new URL(routePath, this.getBaseUrl().toString());
 		const isHttps = url.protocol === 'https:';
 		const requestModule = isHttps ? https : http;
@@ -2625,7 +3433,7 @@ class OmniRouteService implements vscode.Disposable, vscode.TreeDataProvider<Tre
 			});
 
 			request.on('error', reject);
-			request.setTimeout(30000, () => {
+			request.setTimeout(timeoutMs, () => {
 				request.destroy(new Error(`Request timed out for ${routePath}`));
 			});
 			if (payload !== undefined) {

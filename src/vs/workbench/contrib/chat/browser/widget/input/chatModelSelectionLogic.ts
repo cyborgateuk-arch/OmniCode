@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { ChatAgentLocation, ChatModeKind } from '../../../common/constants.js';
+import { COPILOT_VENDOR_ID } from '../../../common/languageModels.js';
 import { ILanguageModelChatMetadata, ILanguageModelChatMetadataAndIdentifier } from '../../../common/languageModels.js';
 
 /**
@@ -107,7 +108,31 @@ export function findDefaultModel(
 	models: ILanguageModelChatMetadataAndIdentifier[],
 	location: ChatAgentLocation,
 ): ILanguageModelChatMetadataAndIdentifier | undefined {
-	return models.find(m => m.metadata.isDefaultForLocation[location]) || models[0];
+	if (models.length === 0) {
+		return undefined;
+	}
+
+	const score = (model: ILanguageModelChatMetadataAndIdentifier): number => {
+		let value = 0;
+		if (model.metadata.vendor !== COPILOT_VENDOR_ID) {
+			value += 100;
+		}
+		if (model.metadata.isDefaultForLocation[location]) {
+			value += 10;
+		}
+		if (model.metadata.capabilities?.toolCalling) {
+			value += 1;
+		}
+		return value;
+	};
+
+	return [...models].sort((a, b) => {
+		const scoreDelta = score(b) - score(a);
+		if (scoreDelta !== 0) {
+			return scoreDelta;
+		}
+		return a.metadata.name.localeCompare(b.metadata.name);
+	})[0];
 }
 
 /**

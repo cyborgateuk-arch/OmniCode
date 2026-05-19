@@ -41,6 +41,7 @@ import { IContextKey, IContextKeyService } from '../../../../../platform/context
 import { CONTEXT_MODELS_SEARCH_FOCUS } from '../../common/constants.js';
 import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
 import Severity from '../../../../../base/common/severity.js';
+import { IChatWidgetService } from '../chat.js';
 
 const $ = DOM.$;
 
@@ -722,7 +723,8 @@ class ActionsColumnRenderer extends ModelsTableColumnRenderer<IActionsColumnTemp
 		@ILanguageModelsService private readonly languageModelsService: ILanguageModelsService,
 		@IDialogService private readonly dialogService: IDialogService,
 		@ICommandService private readonly commandService: ICommandService,
-		@IContextMenuService private readonly contextMenuService: IContextMenuService
+		@IContextMenuService private readonly contextMenuService: IContextMenuService,
+		@IChatWidgetService private readonly chatWidgetService: IChatWidgetService
 	) {
 		super();
 	}
@@ -799,7 +801,12 @@ class ActionsColumnRenderer extends ModelsTableColumnRenderer<IActionsColumnTemp
 	}
 
 	override renderModelElement(entry: ILanguageModelEntry, index: number, templateData: IActionsColumnTemplateData): void {
-		const primaryActions: IAction[] = [];
+		const primaryActions: IAction[] = [toAction({
+			id: `use.${entry.model.identifier}`,
+			label: localize('models.useModel', 'Use Model'),
+			class: ThemeIcon.asClassName(Codicon.check),
+			run: async () => applyModelToChatWidget(this.chatWidgetService, entry)
+		})];
 
 		// Auto model cannot be pinned
 		if (entry.model.metadata.id !== 'auto') {
@@ -885,6 +892,19 @@ function formatTokenCount(count: number): string {
 	return count.toString();
 }
 
+async function applyModelToChatWidget(chatWidgetService: IChatWidgetService, entry: ILanguageModelEntry): Promise<void> {
+	const chatWidget = chatWidgetService.lastFocusedWidget ?? await chatWidgetService.revealWidget();
+	if (!chatWidget) {
+		return;
+	}
+
+	chatWidget.input.setCurrentLanguageModel({
+		metadata: entry.model.metadata,
+		identifier: entry.model.identifier
+	});
+	chatWidget.focusInput();
+}
+
 export class ChatModelsWidget extends Disposable {
 
 	private static NUM_INSTANCES: number = 0;
@@ -921,6 +941,7 @@ export class ChatModelsWidget extends Disposable {
 		@IEditorProgressService private readonly editorProgressService: IEditorProgressService,
 		@ICommandService private readonly commandService: ICommandService,
 		@IContextKeyService private readonly contextKeyService: IContextKeyService,
+		@IChatWidgetService private readonly chatWidgetService: IChatWidgetService,
 	) {
 		super();
 
@@ -1332,7 +1353,9 @@ export class ChatModelsWidget extends Disposable {
 			}
 			if (isLanguageModelProviderEntry(element) || isLanguageModelGroupEntry(element)) {
 				this.viewModel.toggleCollapsed(element);
+				return;
 			}
+			await applyModelToChatWidget(this.chatWidgetService, element);
 		}));
 
 		this.tableDisposables.add(this.table.onDidChangeSelection(e => this.viewModel.selectedEntry = e.elements[0]));

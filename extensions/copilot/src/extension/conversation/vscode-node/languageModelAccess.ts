@@ -296,7 +296,12 @@ export class LanguageModelAccess extends Disposable implements IExtensionContrib
 		};
 		this._register(vscode.lm.registerLanguageModelChatProvider('copilot', provider));
 		this._register(this._authenticationService.onDidAuthenticationChange(() => {
-			// Auth changed which means models could've changed. Fire the event
+			// Auth changed which means models could've changed. Drop cached
+			// copilot-published models so signed-out sessions don't keep stale
+			// copilot defaults alive in the picker.
+			this._currentModels = [];
+			this._chatEndpoints = [];
+			this._utilityAliasEndpoints.clear();
 			this._onDidChange.fire();
 		}));
 		this._register(this._endpointProvider.onDidModelsRefresh(() => {
@@ -310,9 +315,7 @@ export class LanguageModelAccess extends Disposable implements IExtensionContrib
 	private async _provideLanguageModelChatInfo(options: { silent: boolean }, token: vscode.CancellationToken): Promise<vscode.LanguageModelChatInformation[]> {
 		const session = await this._getToken();
 		if (!session) {
-			// Return cached models until we have auth reacquired
-			// We clear this list in onDidAuthenticationChange so signed out should still have model picker clear
-			return this._currentModels;
+			return this._provideUnauthenticatedLanguageModelChatInfo();
 		}
 
 		const models: vscode.LanguageModelChatInformation[] = [];
@@ -416,6 +419,36 @@ export class LanguageModelAccess extends Disposable implements IExtensionContrib
 		this._chatEndpoints = chatEndpoints;
 
 		this._registerUtilityAliasModels(models, allEndpoints);
+		return models;
+	}
+
+	private async _provideUnauthenticatedLanguageModelChatInfo(): Promise<vscode.LanguageModelChatInformation[]> {
+		const models: vscode.LanguageModelChatInformation[] = [];
+		this._chatEndpoints = [];
+		this._utilityAliasEndpoints.clear();
+
+		for (const family of utilityAliasFamilies) {
+			let endpoint: IChatEndpoint | undefined;
+			try {
+				endpoint = await this._endpointProvider.getChatEndpoint(family);
+			} catch (err) {
+				this._logService.warn(`[LanguageModelAccess] Failed to resolve unauthenticated utility alias '${family}': ${err}`);
+				continue;
+			}
+
+			let baseCount = 0;
+			try {
+				baseCount = await this._promptBaseCountCache.getBaseCount(endpoint);
+			} catch (err) {
+				this._logService.warn(`[LanguageModelAccess] Failed to compute baseCount for unauthenticated utility alias '${family}' -> ${endpoint.model}; publishing with zero base count. Error: ${err}`);
+			}
+
+			this._resolvedUtilityEndpoints.set(family, { endpoint, baseCount });
+			this._utilityAliasEndpoints.set(family, endpoint);
+			models.push(buildUtilityAliasModelInfo(family, endpoint, [], baseCount, undefined).info);
+		}
+
+		this._currentModels = models;
 		return models;
 	}
 

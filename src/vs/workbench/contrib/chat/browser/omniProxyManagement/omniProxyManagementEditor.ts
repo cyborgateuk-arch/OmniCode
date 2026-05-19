@@ -414,7 +414,10 @@ export class OmniProxyManagementEditor extends EditorPane {
 		this.errorMessage = undefined;
 		this.render();
 		try {
-			this.dashboardData = await this.commandService.executeCommand<OmniProxyDashboardData>('omniroute.getDashboardData');
+			this.dashboardData = await Promise.race([
+				this.commandService.executeCommand<OmniProxyDashboardData>('omniroute.getDashboardData', this.selectedSection),
+				new Promise<OmniProxyDashboardData>((_, reject) => setTimeout(() => reject(new Error(localize('omniProxy.loading.timeout', 'Timed out while loading OmniProxy dashboard data.'))), 15000))
+			]);
 		} catch (error) {
 			this.dashboardData = undefined;
 			this.errorMessage = getErrorMessage(error);
@@ -430,9 +433,12 @@ export class OmniProxyManagementEditor extends EditorPane {
 	}
 
 	private storeSelectedSection(section: OmniProxyManagementSection): void {
+		if (this.selectedSection === section && this.dashboardData) {
+			return;
+		}
 		this.selectedSection = section;
 		this.storageService.store(OMNI_PROXY_SELECTED_SECTION_STORAGE_KEY, section, StorageScope.APPLICATION, StorageTarget.USER);
-		this.render();
+		void this.refreshDashboard();
 	}
 
 	private render(): void {
@@ -993,6 +999,7 @@ export class OmniProxyManagementEditor extends EditorPane {
 		DOM.append(content, $('div.omni-proxy-provider-card-detail', {}, detail));
 
 		const footer = DOM.append(card, $('.omni-proxy-provider-card-footer'));
+		this.appendCommandButton(footer, localize('omniProxy.provider.guide', 'Guide'), Codicon.book, 'omniroute.showProviderGuide', provider.id);
 		const actionLabel = provider.connectionCount > 0 ? localize('omniProxy.provider.addAccount', 'Add Account') : localize('omniProxy.provider.connect', 'Connect');
 		this.appendCommandButton(footer, actionLabel, Codicon.plug, 'omniroute.connectProvider', provider.id, true);
 	}

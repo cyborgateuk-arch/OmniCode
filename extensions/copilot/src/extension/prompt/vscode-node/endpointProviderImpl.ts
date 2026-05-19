@@ -76,6 +76,7 @@ export class ProductionEndpointProvider extends Disposable implements IEndpointP
 	// `vscode.lm.selectChatModels({ vendor, id })`.
 	private static readonly UTILITY_MODEL_CONFIG_KEY = 'chat.utilityModel';
 	private static readonly UTILITY_SMALL_MODEL_CONFIG_KEY = 'chat.utilitySmallModel';
+	private static readonly AUTO_UTILITY_VENDOR_PREFERENCE = ['customendpoint', 'customoai', 'ollama'];
 
 	/**
 	 * Per-family marker recording that we already emitted a telemetry event
@@ -138,6 +139,10 @@ export class ProductionEndpointProvider extends Disposable implements IEndpointP
 		const override = await this._resolveUtilityOverride(family);
 		if (override) {
 			return override;
+		}
+		const automaticOverride = await this._resolveAutomaticUtilityOverride(family);
+		if (automaticOverride) {
+			return automaticOverride;
 		}
 		if (family === 'copilot-utility-small') {
 			return CopilotUtilitySmallChatEndpoint.resolve(this._modelFetcher, this._instantiationService);
@@ -231,6 +236,49 @@ export class ProductionEndpointProvider extends Disposable implements IEndpointP
 		this._logService.trace(`[ProductionEndpointProvider] Applying ${configKey} override: ${model.vendor}/${model.id}`);
 		this._reportOverrideAppliedTelemetry(family);
 		return this._instantiationService.createInstance(ExtensionContributedChatEndpoint, model);
+	}
+
+	private async _resolveAutomaticUtilityOverride(family: ChatEndpointFamily): Promise<IChatEndpoint | undefined> {
+		let models: readonly LanguageModelChat[];
+		try {
+			models = await lm.selectChatModels();
+		} catch (err) {
+			this._logService.warn(`[ProductionEndpointProvider] Failed to enumerate chat models for automatic ${family} resolution; falling back to default. Error: ${err}`);
+			return undefined;
+		}
+
+		const candidates = models.filter(model => model.vendor !== 'copilot');
+		if (candidates.length === 0) {
+			return undefined;
+		}
+
+		const vendorPreference = new Map<string, number>(
+			ProductionEndpointProvider.AUTO_UTILITY_VENDOR_PREFERENCE.map((vendor, index) => [vendor, index])
+		);
+		const pick = [...candidates].sort((a, b) => {
+			const vendorScoreA = vendorPreference.get(a.vendor) ?? Number.MAX_SAFE_INTEGER;
+			const vendorScoreB = vendorPreference.get(b.vendor) ?? Number.MAX_SAFE_INTEGER;
+			if (vendorScoreA !== vendorScoreB) {
+				return vendorScoreA - vendorScoreB;
+			}
+
+			if (family === 'copilot-utility-small') {
+				const tokenDelta = a.maxInputTokens - b.maxInputTokens;
+				if (tokenDelta !== 0) {
+					return tokenDelta;
+				}
+			} else {
+				const tokenDelta = b.maxInputTokens - a.maxInputTokens;
+				if (tokenDelta !== 0) {
+					return tokenDelta;
+				}
+			}
+
+			return a.name.localeCompare(b.name);
+		})[0];
+
+		this._logService.trace(`[ProductionEndpointProvider] Auto-resolved ${family} to ${pick.vendor}/${pick.id}.`);
+		return this._instantiationService.createInstance(ExtensionContributedChatEndpoint, pick);
 	}
 
 	private _reportOverrideAppliedTelemetry(family: ChatEndpointFamily): void {

@@ -2487,7 +2487,7 @@ export class AgentHostSessionHandler extends Disposable implements IChatSessionC
 		if (hasRequiredAuth && this._config.resolveAuthentication) {
 			const authenticated = await this._config.resolveAuthentication(protectedResources);
 			if (!authenticated) {
-				throw new Error(localize('agentHost.authRequired', "Authentication is required to start a session. Please sign in and try again."));
+				throw new Error(localize('agentHost.authRequired', "Authentication or provider configuration is required to start this session. Configure the selected model or provider and try again."));
 			}
 		}
 
@@ -2524,7 +2524,7 @@ export class AgentHostSessionHandler extends Disposable implements IChatSessionC
 						activeClient,
 					});
 				} else {
-					throw new Error(localize('agentHost.authRequired', "Authentication is required to start a session. Please sign in and try again."));
+					throw new Error(localize('agentHost.authRequired', "Authentication or provider configuration is required to start this session. Configure the selected model or provider and try again."));
 				}
 			} else {
 				throw err;
