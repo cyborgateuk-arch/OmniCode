@@ -1,0 +1,101 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/* "OmniProxy" titlebar widget — icon-only at rest, expands on hover/focus. */
+.monaco-workbench .open-in-agents-titlebar-widget {
+	display: inline-flex;
+	align-items: center;
+	height: 22px;
+	padding: 0 8px;
+	margin: 0 10px 0 2px;
+	border-radius: 999px;
+	cursor: pointer;
+	color: var(--vscode-titleBar-activeForeground);
+	-webkit-app-region: no-drag;
+	white-space: nowrap;
+	position: relative;
+	background:
+		linear-gradient(135deg, color-mix(in srgb, var(--vscode-titleBar-activeForeground) 7%, transparent), transparent 72%),
+		color-mix(in srgb, var(--vscode-titleBar-activeBackground) 85%, transparent);
+	border: 1px solid color-mix(in srgb, var(--vscode-titleBar-activeForeground) 14%, transparent);
+	box-shadow: inset 0 1px 0 color-mix(in srgb, var(--vscode-titleBar-activeForeground) 6%, transparent);
+}
+
+/* Vertical separator drawn as an absolutely positioned pseudo-element so it isn't clipped by any ancestor `overflow: hidden`. */
+.monaco-workbench .open-in-agents-titlebar-widget::after {
+	content: '';
+	position: absolute;
+	right: -6px;
+	top: 4px;
+	bottom: 4px;
+	width: 1px;
+	background-color: var(--vscode-widget-border, rgba(128, 128, 128, 0.5));
+	pointer-events: none;
+}
+
+.monaco-workbench .open-in-agents-titlebar-widget > .open-in-agents-titlebar-widget-icon {
+	width: 18px;
+	height: 18px;
+	flex: 0 0 auto;
+	background-image: url('../../../../../../sessions/browser/media/sessions-logo-light.svg');
+	background-repeat: no-repeat;
+	background-position: center center;
+	background-size: contain;
+}
+
+.monaco-enable-motion .monaco-workbench .open-in-agents-titlebar-widget > .open-in-agents-titlebar-widget-icon,
+.monaco-workbench.monaco-enable-motion .open-in-agents-titlebar-widget > .open-in-agents-titlebar-widget-icon {
+	transition: filter 160ms ease;
+}
+
+.monaco-reduce-motion .monaco-workbench .open-in-agents-titlebar-widget > .open-in-agents-titlebar-widget-icon,
+.monaco-workbench.monaco-reduce-motion .open-in-agents-titlebar-widget > .open-in-agents-titlebar-widget-icon {
+	transition-duration: 0ms !important;
+}
+
+.monaco-workbench .open-in-agents-titlebar-widget > .open-in-agents-titlebar-widget-label {
+	display: inline-block;
+	max-width: 0;
+	opacity: 0;
+	margin-left: 0;
+	color: var(--vscode-foreground);
+	font: inherit;
+	overflow: hidden;
+	white-space: nowrap;
+}
+
+.monaco-enable-motion .monaco-workbench .open-in-agents-titlebar-widget > .open-in-agents-titlebar-widget-label,
+.monaco-workbench.monaco-enable-motion .open-in-agents-titlebar-widget > .open-in-agents-titlebar-widget-label {
+	transition: max-width 160ms ease, opacity 160ms ease, margin-left 160ms ease;
+	transition-delay: 200ms;
+}
+
+.monaco-workbench .open-in-agents-titlebar-widget:hover,
+.monaco-workbench .open-in-agents-titlebar-widget:focus-visible {
+	background:
+		linear-gradient(135deg, color-mix(in srgb, var(--vscode-titleBar-activeForeground) 10%, transparent), transparent 72%),
+		color-mix(in srgb, var(--vscode-toolbar-hoverBackground) 85%, transparent);
+	outline: none;
+	border-color: color-mix(in srgb, var(--vscode-titleBar-activeForeground) 22%, transparent);
+}
+
+.monaco-workbench .open-in-agents-titlebar-widget:hover > .open-in-agents-titlebar-widget-label,
+.monaco-workbench .open-in-agents-titlebar-widget:focus-visible > .open-in-agents-titlebar-widget-label {
+	max-width: 200px;
+	opacity: 1;
+	margin-left: 6px;
+}
+
+.monaco-enable-motion .monaco-workbench .open-in-agents-titlebar-widget:hover > .open-in-agents-titlebar-widget-label,
+.monaco-enable-motion .monaco-workbench .open-in-agents-titlebar-widget:focus-visible > .open-in-agents-titlebar-widget-label,
+.monaco-workbench.monaco-enable-motion .open-in-agents-titlebar-widget:hover > .open-in-agents-titlebar-widget-label,
+.monaco-workbench.monaco-enable-motion .open-in-agents-titlebar-widget:focus-visible > .open-in-agents-titlebar-widget-label {
+	transition-delay: 0ms;
+}
+
+.monaco-workbench .open-in-agents-titlebar-widget:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
+}

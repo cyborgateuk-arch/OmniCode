@@ -1,0 +1,10 @@
+<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
+<defs>
+<linearGradient id="omnicodeBlueDark" x1="52" y1="22" x2="120" y2="98" gradientUnits="userSpaceOnUse">
+<stop stop-color="#8B97FF"/>
+<stop offset="1" stop-color="#4A6BFF"/>
+</linearGradient>
+</defs>
+<path d="M53 27C37.536 27 25 43.1183 25 63C25 82.8817 37.536 99 53 99C59.0622 99 64.6743 96.5238 69.275 92.3311" stroke="#B4BED7" stroke-width="18" stroke-linecap="round"/>
+<path d="M75 27C90.464 27 103 43.1183 103 63C103 82.8817 90.464 99 75 99C68.9378 99 63.3257 96.5238 58.725 92.3311" stroke="url(#omnicodeBlueDark)" stroke-width="18" stroke-linecap="round"/>
+</svg>
