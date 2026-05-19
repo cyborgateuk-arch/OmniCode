@@ -14,8 +14,6 @@ export const CONTEXT_OMNI_PROXY_MANAGEMENT_EDITOR = new RawContextKey<boolean>('
 
 export const enum OmniProxyManagementSection {
 	Home = 'home',
-	Endpoints = 'endpoints',
-	ApiManager = 'apiManager',
 	Providers = 'providers',
 	Combos = 'combos',
 	BatchTesting = 'batchTesting',

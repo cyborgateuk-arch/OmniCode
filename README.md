@@ -13,6 +13,8 @@
 OmniCode replaces the default Code - OSS branding with the OmniCode identity and adds a first-party OmniProxy workflow inside the editor. The integration is native to the workbench rather than a webview overlay:
 
 - `OmniProxy` opens from the titlebar entry that replaced the old agent action.
+- OmniProxy now runs from an embedded runtime inside `vscode-main/omniroute-runtime`, so it no longer depends on a separate `OmniRoute-main` folder name or sibling checkout layout.
+- Public repository builds do not ship live OAuth client defaults. Provider OAuth values must be supplied through a local ignored `.env` or deployment secrets.
 - Provider management, model sync, usage analytics, cache controls, quotas, and media state are rendered in a native workbench editor.
 - Custom endpoints are added through the standard language model flow and can fetch models directly from the configured API.
 - Synced OmniProxy models appear in the same model picker used by chat and agents.
@@ -29,9 +31,10 @@ OmniCode replaces the default Code - OSS branding with the OmniCode identity and
 
 ## Key capabilities
 
-- Native OmniProxy workspace with dedicated sections for `Home`, `Endpoints`, `API Manager`, `Providers`, `Combos`, `Batch Testing`, `Costs`, `Analytics`, `Cache`, `Limits & Quotas`, and `Media`
+- Native OmniProxy workspace with dedicated sections for `Home`, `Providers`, `Combos`, `Batch Testing`, `Costs`, `Analytics`, `Cache`, `Limits & Quotas`, and `Media`
 - Multi-account provider connection support, including synced model availability inside the normal chat model picker
 - Custom endpoint setup that asks only for group name, API key reference, and base URL, then fetches available models from the endpoint
+- VS Code-native OmniProxy UI styling with smaller cards, neutral icons, standard theme tokens, and minimal decoration
 - Branded OmniCode app icons, in-product logo assets, and renamed product surfaces
 - Local-secret handling through VS Code secret storage instead of committed credentials
 

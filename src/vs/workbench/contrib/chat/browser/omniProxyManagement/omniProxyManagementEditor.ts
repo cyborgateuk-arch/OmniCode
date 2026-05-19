@@ -332,8 +332,6 @@ interface OmniProxySectionItem {
 
 const SECTION_ITEMS: readonly OmniProxySectionItem[] = [
 	{ id: OmniProxyManagementSection.Home, label: localize('omniProxy.section.home', 'Home'), description: localize('omniProxy.section.home.description', 'Overview of the local OmniProxy runtime, usage, and model sync status.'), icon: Codicon.home },
-	{ id: OmniProxyManagementSection.Endpoints, label: localize('omniProxy.section.endpoints', 'Endpoints'), description: localize('omniProxy.section.endpoints.description', 'Base URL and runtime configuration for the local OmniProxy endpoint.'), icon: Codicon.symbolInterface },
-	{ id: OmniProxyManagementSection.ApiManager, label: localize('omniProxy.section.apiManager', 'API Manager'), description: localize('omniProxy.section.apiManager.description', 'Access key, model sync, and Custom Endpoint integration.'), icon: Codicon.key },
 	{ id: OmniProxyManagementSection.Providers, label: localize('omniProxy.section.providers', 'Providers'), description: localize('omniProxy.section.providers.description', 'Connect and manage OmniProxy provider accounts.'), icon: Codicon.serverEnvironment },
 	{ id: OmniProxyManagementSection.Combos, label: localize('omniProxy.section.combos', 'Combos'), description: localize('omniProxy.section.combos.description', 'Multi-account routing and provider mix strategy.'), icon: Codicon.layers },
 	{ id: OmniProxyManagementSection.BatchTesting, label: localize('omniProxy.section.batchTesting', 'Batch Testing'), description: localize('omniProxy.section.batchTesting.description', 'Quick validation for providers, proxies, and model availability.'), icon: Codicon.beaker },
@@ -504,12 +502,6 @@ export class OmniProxyManagementEditor extends EditorPane {
 			case OmniProxyManagementSection.Home:
 				this.renderHomeSection(data);
 				break;
-			case OmniProxyManagementSection.Endpoints:
-				this.renderEndpointsSection(data);
-				break;
-			case OmniProxyManagementSection.ApiManager:
-				this.renderApiManagerSection(data);
-				break;
 			case OmniProxyManagementSection.Providers:
 				this.renderProvidersSection(data);
 				break;
@@ -589,85 +581,6 @@ export class OmniProxyManagementEditor extends EditorPane {
 		this.appendDetail(proxyCard, localize('omniProxy.detail.proxyCount', 'Configured Proxies'), String(data.stats.proxyCount));
 		this.appendDetail(proxyCard, localize('omniProxy.detail.globalProxyName', 'Global Proxy'), data.globalProxyName ?? localize('omniProxy.detail.none', 'None'));
 		this.appendCommandButton(proxyCard, localize('omniProxy.action.addProxy', 'Add Proxy'), Codicon.globe, 'omniroute.addProxy', undefined, true);
-	}
-
-	private renderEndpointsSection(data: OmniProxyDashboardData): void {
-		this.renderHeader(localize('omniProxy.endpoints.title', 'Endpoints'), localize('omniProxy.endpoints.description', 'Surface the same local API, MCP, and OAuth callback routes OmniRoute exposes, along with the runtime controls they depend on.'));
-		const cards = DOM.append(this.contentContainer!, $('.omni-proxy-card-grid'));
-		const endpointCard = this.appendCard(cards, localize('omniProxy.endpoints.baseUrlCard', 'Runtime Endpoint'), data.runtime.baseUrl);
-		this.appendDetail(endpointCard, localize('omniProxy.endpoints.baseUrl', 'Base URL'), data.runtime.baseUrl);
-		this.appendDetail(endpointCard, localize('omniProxy.endpoints.apiPort', 'API Port'), String(data.sections.endpoints.apiPort ?? '20128'));
-		this.appendDetail(endpointCard, localize('omniProxy.endpoints.dashboardPort', 'Dashboard Port'), String(data.sections.endpoints.dashboardPort ?? '20128'));
-		this.appendCommandButton(endpointCard, localize('omniProxy.endpoints.setBaseUrl', 'Set Base URL'), Codicon.link, 'omniroute.configureBaseUrl', undefined, true);
-
-		const runtimeCard = this.appendCard(cards, localize('omniProxy.endpoints.nodeCard', 'Runtime Binaries'), localize('omniProxy.endpoints.nodeDescription', 'Node/npm and machine identity used by the local OmniProxy process.'));
-		this.appendDetail(runtimeCard, localize('omniProxy.endpoints.nodePath', 'Node'), data.runtime.nodePath);
-		this.appendDetail(runtimeCard, localize('omniProxy.endpoints.npmPath', 'npm'), data.runtime.npmPath);
-		this.appendDetail(runtimeCard, localize('omniProxy.endpoints.machineId', 'Machine ID'), data.sections.endpoints.machineId ?? localize('omniProxy.endpoints.none', 'Not available'));
-		this.appendCommandButton(runtimeCard, localize('omniProxy.endpoints.setNode', 'Set Node'), Codicon.symbolModule, 'omniroute.configureNodePath', undefined, true);
-		this.appendCommandButton(runtimeCard, localize('omniProxy.endpoints.setNpm', 'Set npm'), Codicon.package, 'omniroute.configureNpmPath', undefined, true);
-
-		const accessCard = this.appendCard(cards, localize('omniProxy.endpoints.accessCard', 'Access and Startup'), data.runtime.authUnlocked ? localize('omniProxy.endpoints.localAccess', 'Local access is unlocked') : localize('omniProxy.endpoints.waitingAccess', 'Waiting for local access'));
-		this.appendDetail(accessCard, localize('omniProxy.endpoints.autoStart', 'Auto-Start'), data.runtime.autoStart ? localize('omniProxy.endpoints.enabled', 'Enabled') : localize('omniProxy.endpoints.disabled', 'Disabled'));
-		this.appendDetail(accessCard, localize('omniProxy.endpoints.dependencies', 'Dependencies'), data.runtime.dependenciesInstalled ? localize('omniProxy.endpoints.installed', 'Installed') : localize('omniProxy.endpoints.notInstalled', 'Not installed'));
-		this.appendDetail(accessCard, localize('omniProxy.endpoints.cloud', 'Cloud URL'), data.sections.endpoints.cloudConfigured ? (data.sections.endpoints.cloudUrl ?? localize('omniProxy.endpoints.configured', 'Configured')) : localize('omniProxy.endpoints.notConfigured', 'Not configured'));
-		this.appendCommandButton(accessCard, localize('omniProxy.endpoints.toggleAutoStart', 'Toggle Auto-Start'), Codicon.play, 'omniroute.toggleAutoStart', undefined, true);
-
-		const listCard = this.appendCard(this.contentContainer!, localize('omniProxy.endpoints.routesCard', 'Available Routes'), localize('omniProxy.endpoints.routesDescription', 'These routes map to the same OmniRoute capabilities you can call externally or through VS Code Custom Endpoint.'));
-		for (const item of data.sections.endpoints.items) {
-			const row = this.appendListRow(listCard, item.label, `${item.category} · ${item.fullUrl}`);
-			if (item.description) {
-				DOM.append(row, $('div.omni-proxy-list-row-note', {}, item.description));
-			}
-		}
-	}
-
-	private renderApiManagerSection(data: OmniProxyDashboardData): void {
-		this.renderHeader(localize('omniProxy.apiManager.title', 'API Manager'), localize('omniProxy.apiManager.description', 'Expose OmniRoute-style key management, alias controls, and model sync directly in the native OmniProxy editor.'));
-		const cards = DOM.append(this.contentContainer!, $('.omni-proxy-card-grid'));
-		const keyCard = this.appendCard(cards, localize('omniProxy.apiManager.keyCard', 'Access Key and Key Store'), data.runtime.hasAccessKey ? localize('omniProxy.apiManager.keyAvailable', 'A local access key is available for the OmniProxy Custom Endpoint group.') : localize('omniProxy.apiManager.keyMissing', 'Issue a local access key before using OmniProxy as a Custom Endpoint.'));
-		this.appendDetail(keyCard, localize('omniProxy.apiManager.keyStatus', 'Status'), data.runtime.hasAccessKey ? localize('omniProxy.apiManager.available', 'Available') : localize('omniProxy.apiManager.missing', 'Missing'));
-		this.appendDetail(keyCard, localize('omniProxy.apiManager.totalKeys', 'Stored Keys'), String(data.sections.apiManager.keys.length));
-		this.appendCommandButton(keyCard, localize('omniProxy.apiManager.refreshKey', 'Refresh Access Key'), Codicon.key, 'omniroute.issueAccessKey', undefined, true);
-		this.appendCommandButton(keyCard, localize('omniProxy.apiManager.createKey', 'Create API Key'), Codicon.add, 'omniroute.createApiKey', undefined, true);
-
-		const syncCard = this.appendCard(cards, localize('omniProxy.apiManager.syncCard', 'Custom Endpoint Sync'), localize('omniProxy.apiManager.syncDescription', 'Write or update the OmniProxy group inside chatLanguageModels.json so models appear in the standard picker.'));
-		this.appendDetail(syncCard, localize('omniProxy.apiManager.syncedModels', 'Current Model Count'), String(data.stats.modelCount));
-		this.appendDetail(syncCard, localize('omniProxy.apiManager.lastSync', 'Last Sync'), data.runtime.lastSync ? this.formatTimestamp(data.runtime.lastSync) : localize('omniProxy.apiManager.never', 'Never'));
-		this.appendCommandButton(syncCard, localize('omniProxy.apiManager.syncModels', 'Sync Models'), Codicon.sync, 'omniroute.syncModels', undefined, true);
-		this.appendCommandButton(syncCard, localize('omniProxy.apiManager.manageModels', 'Open Language Models'), Codicon.settingsGear, 'omniroute.openModels');
-
-		const aliasesCard = this.appendCard(cards, localize('omniProxy.apiManager.aliasCard', 'Model Aliases'), localize('omniProxy.apiManager.aliasDescription', 'Custom and built-in alias remaps from OmniRoute are visible here.'));
-		this.appendDetail(aliasesCard, localize('omniProxy.apiManager.aliasCount', 'Aliases'), String(data.sections.apiManager.aliases.length));
-		this.appendCommandButton(aliasesCard, localize('omniProxy.apiManager.addAlias', 'Add Alias'), Codicon.add, 'omniroute.addModelAlias', undefined, true);
-
-		const keysList = this.appendCard(this.contentContainer!, localize('omniProxy.apiManager.keysList', 'API Keys'), localize('omniProxy.apiManager.keysListDescription', 'Keys created here can be used by OmniRoute clients, combos, or internal tests.'));
-		if (!data.sections.apiManager.keys.length) {
-			this.appendEmptyNote(keysList, localize('omniProxy.apiManager.noKeys', 'No API keys created yet.'));
-		} else {
-			for (const key of data.sections.apiManager.keys) {
-				const row = this.appendListRow(keysList, key.name, `${key.key ?? ''} · ${key.isActive === false ? 'Disabled' : 'Active'}`);
-				this.appendTagRow(row, [
-					key.noLog ? localize('omniProxy.apiManager.noLog', 'No log') : undefined,
-					key.isBanned ? localize('omniProxy.apiManager.banned', 'Banned') : undefined,
-					key.expiresAt ? `${localize('omniProxy.apiManager.expires', 'Expires')} ${this.formatTimestamp(key.expiresAt)}` : undefined
-				]);
-				this.appendInlineCommand(row, localize('omniProxy.apiManager.deleteKey', 'Delete'), Codicon.trash, 'omniroute.deleteApiKey', key.id, true);
-			}
-		}
-
-		const aliasList = this.appendCard(this.contentContainer!, localize('omniProxy.apiManager.aliasesList', 'Alias Map'), localize('omniProxy.apiManager.aliasesListDescription', 'Alias rewrites are applied before requests leave the local OmniProxy endpoint.'));
-		if (!data.sections.apiManager.aliases.length) {
-			this.appendEmptyNote(aliasList, localize('omniProxy.apiManager.noAliases', 'No aliases available.'));
-		} else {
-			for (const alias of data.sections.apiManager.aliases.slice(0, 40)) {
-				const row = this.appendListRow(aliasList, alias.from, alias.to);
-				this.appendTagRow(row, [alias.builtIn ? localize('omniProxy.apiManager.builtInAlias', 'Built-in') : localize('omniProxy.apiManager.customAlias', 'Custom')]);
-				if (!alias.builtIn) {
-					this.appendInlineCommand(row, localize('omniProxy.apiManager.removeAlias', 'Remove'), Codicon.trash, 'omniroute.removeModelAlias', alias.from, true);
-				}
-			}
-		}
 	}
 
 	private renderProvidersSection(data: OmniProxyDashboardData): void {
@@ -1063,9 +976,6 @@ export class OmniProxyManagementEditor extends EditorPane {
 	private appendProviderCard(container: HTMLElement, provider: OmniProxyDashboardProvider): void {
 		const card = DOM.append(container, $('.omni-proxy-provider-card'));
 		const icon = DOM.append(card, $('.omni-proxy-provider-icon'));
-		if (provider.color) {
-			icon.style.backgroundColor = provider.color;
-		}
 		icon.textContent = provider.name.split(/\s+/).slice(0, 2).map(part => part.charAt(0).toUpperCase()).join('').slice(0, 2);
 
 		const content = DOM.append(card, $('.omni-proxy-provider-card-content'));

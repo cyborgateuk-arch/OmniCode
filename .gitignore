@@ -33,6 +33,12 @@ test/componentFixtures/.screenshots/*
 dist
 .playwright-cli
 .playwright-mcp
+omniroute-runtime/node_modules/
+omniroute-runtime/.next/
+omniroute-runtime/.env
+omniroute-runtime/.env.bak
+omniroute-runtime/logs/
+OmniRoute-main/
 .claude/
 .agents/agents/*.local.md
 .github/agents/*.local.md

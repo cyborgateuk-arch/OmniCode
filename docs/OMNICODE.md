@@ -26,7 +26,7 @@ flowchart LR
     A["OmniCode Workbench"] --> B["Native OmniProxy Management Editor"]
     A --> C["Chat Model Picker"]
     B --> D["OmniRoute Extension Bridge"]
-    D --> E["Local OmniProxy Runtime"]
+    D --> E["Embedded Runtime (omniroute-runtime)"]
     E --> F["OAuth / API-Key Providers"]
     E --> G["OpenAI-compatible Custom Endpoints"]
     D --> H["VS Code Secret Storage"]
@@ -43,8 +43,6 @@ The OmniProxy titlebar action opens a native workbench editor with a left naviga
 Available sections:
 
 - `Home`
-- `Endpoints`
-- `API Manager`
 - `Providers`
 - `Combos`
 - `Batch Testing`
@@ -61,6 +59,30 @@ Each section is rendered from native workbench code in:
 The runtime and provider data is supplied by:
 
 - `extensions/omniroute/src/extension.ts`
+
+The UI styling intentionally tracks VS Code rather than a custom branded dashboard skin:
+
+- standard VS Code theme tokens
+- neutral monochrome provider icons
+- flatter panels and smaller cards
+- minimal gradients and no decorative background branding
+
+### 1.1 Embedded OmniProxy runtime
+
+OmniProxy now resolves its runtime from:
+
+- `omniroute-runtime/`
+
+This removes the prior dependency on a separate `OmniRoute-main` folder name or workspace layout. The extension still has a legacy fallback for older local setups, but the checked-in runtime source now lives under the main repository.
+
+The embedded runtime path is designed for repo safety:
+
+- source files are committed
+- `node_modules/`, `.next/`, `logs/`, and generated `.env` files are ignored
+- tracked sources do not include live OAuth client IDs or client secrets
+- the extension reuses the existing `STORAGE_ENCRYPTION_KEY` from legacy OmniRoute env files when migrating encrypted local state
+
+Provider OAuth credentials for local or deployed use should be supplied through a local ignored `.env` file, deployment secrets, or `data/provider-credentials.json` where supported.
 
 ### 2. Provider connections
 
@@ -116,6 +138,8 @@ Important implementation areas:
   Shared workbench logo surface
 - `src/vs/workbench/contrib/chat/browser/omniProxyManagement/`
   Native OmniProxy management editor
+- `omniroute-runtime/`
+  Embedded OmniProxy runtime source shipped inside the main repository
 - `src/vs/workbench/contrib/chat/common/languageModels.ts`
   Custom endpoint creation flow and model discovery
 - `extensions/omniroute/`
@@ -162,7 +186,8 @@ Recommended practice for contributors:
 
 1. Keep custom endpoint keys in secret storage only.
 2. Do not commit local profile files such as `chatLanguageModels.json`.
-3. Keep generated automation logs and screenshots out of git unless they are intentionally curated documentation assets.
+3. Do not commit generated `omniroute-runtime/.env`, `node_modules`, `.next`, or log directories.
+4. Keep generated automation logs and screenshots out of git unless they are intentionally curated documentation assets.
 
 ## Current scope
 

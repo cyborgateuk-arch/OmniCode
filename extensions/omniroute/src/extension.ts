@@ -463,6 +463,7 @@ const OMNIPROXY_BRAND_NAME = 'OmniProxy';
 const OMNIROUTE_SECRET_KEY = 'chat.lm.secret.omniroute.vscode';
 const OMNIROUTE_ACCESS_KEY_ID_STORAGE = 'omniroute.accessKeyId';
 const OMNIROUTE_LAST_SYNC_STORAGE = 'omniroute.lastSyncTime';
+const OMNIROUTE_EMBEDDED_RUNTIME_DIR = 'omniroute-runtime';
 
 const DEVICE_CODE_PROVIDERS = new Set(['github', 'qwen', 'kiro', 'amazon-q', 'kimi-coding', 'kilocode']);
 
@@ -669,7 +670,7 @@ class OmniRouteService implements vscode.Disposable, vscode.TreeDataProvider<Tre
 
 	private async initialize(): Promise<void> {
 		this.outputChannel.appendLine(`[${OMNIPROXY_BRAND_NAME}] workspace root: ${this.workspaceRoot || '<none>'}`);
-		this.outputChannel.appendLine(`[${OMNIPROXY_BRAND_NAME}] resolved workspace root: ${this.omniRouteRoot}`);
+		this.outputChannel.appendLine(`[${OMNIPROXY_BRAND_NAME}] resolved runtime root: ${this.omniRouteRoot}`);
 		await this.context.secrets.delete(OMNIROUTE_SECRET_KEY);
 		await this.refresh();
 	}
@@ -1961,18 +1962,27 @@ class OmniRouteService implements vscode.Disposable, vscode.TreeDataProvider<Tre
 
 	private resolveOmniRouteRoot(): string {
 		const candidates = [
+			this.workspaceRoot ? path.join(this.workspaceRoot, OMNIROUTE_EMBEDDED_RUNTIME_DIR) : undefined,
+			path.join(this.repoRoot, OMNIROUTE_EMBEDDED_RUNTIME_DIR),
+			path.join(process.cwd(), OMNIROUTE_EMBEDDED_RUNTIME_DIR),
 			this.workspaceRoot ? path.join(this.workspaceRoot, 'OmniRoute-main') : undefined,
 			path.join(this.repoRoot, 'OmniRoute-main'),
 			path.join(process.cwd(), 'OmniRoute-main'),
 		].filter((candidate): candidate is string => typeof candidate === 'string');
 
 		for (const candidate of candidates) {
-			if (fs.existsSync(path.join(candidate, 'package.json'))) {
+			if (this.isOmniRouteRuntimeRoot(candidate)) {
 				return candidate;
 			}
 		}
 
-		return candidates[0] ?? path.join(this.repoRoot, 'OmniRoute-main');
+		return candidates[0] ?? path.join(this.repoRoot, OMNIROUTE_EMBEDDED_RUNTIME_DIR);
+	}
+
+	private isOmniRouteRuntimeRoot(candidate: string): boolean {
+		return fs.existsSync(path.join(candidate, 'package.json'))
+			&& fs.existsSync(path.join(candidate, 'src', 'shared', 'constants', 'providers.ts'))
+			&& fs.existsSync(path.join(candidate, 'scripts'));
 	}
 
 	private dependenciesInstalled(): boolean {
@@ -2006,6 +2016,67 @@ class OmniRouteService implements vscode.Disposable, vscode.TreeDataProvider<Tre
 	private getNpmPath(): string {
 		const configured = vscode.workspace.getConfiguration('omniroute').get<string>('npmPath', '/tmp/vscode-run-bin/npm');
 		return configured && fs.existsSync(configured) ? configured : 'npm';
+	}
+
+	private resolveRuntimeSecretOverrides(): NodeJS.ProcessEnv {
+		const overrides: NodeJS.ProcessEnv = {};
+		const storageEncryptionKey = this.resolveEnvValue('STORAGE_ENCRYPTION_KEY');
+		if (storageEncryptionKey) {
+			overrides.STORAGE_ENCRYPTION_KEY = storageEncryptionKey;
+		}
+
+		const storageEncryptionKeyVersion = this.resolveEnvValue('STORAGE_ENCRYPTION_KEY_VERSION');
+		if (storageEncryptionKeyVersion) {
+			overrides.STORAGE_ENCRYPTION_KEY_VERSION = storageEncryptionKeyVersion;
+		}
+
+		return overrides;
+	}
+
+	private resolveEnvValue(key: string): string | undefined {
+		const fromProcess = process.env[key]?.trim();
+		if (fromProcess) {
+			return fromProcess;
+		}
+
+		for (const candidate of this.getRuntimeEnvCandidateFiles()) {
+			const value = this.readEnvFileValue(candidate, key);
+			if (value) {
+				return value;
+			}
+		}
+
+		return undefined;
+	}
+
+	private getRuntimeEnvCandidateFiles(): readonly string[] {
+		const homeDir = process.env.HOME;
+		return [
+			path.join(this.omniRouteRoot, '.env'),
+			this.workspaceRoot ? path.join(this.workspaceRoot, 'OmniRoute-main', '.env') : undefined,
+			path.join(this.repoRoot, 'OmniRoute-main', '.env'),
+			homeDir ? path.join(homeDir, '.omniroute', 'server.env') : undefined,
+			homeDir ? path.join(homeDir, '.omniroute', '.env') : undefined,
+		].filter((candidate): candidate is string => typeof candidate === 'string');
+	}
+
+	private readEnvFileValue(filePath: string, key: string): string | undefined {
+		if (!fs.existsSync(filePath)) {
+			return undefined;
+		}
+
+		const pattern = new RegExp(`^${key}=(.*)$`, 'm');
+		const match = fs.readFileSync(filePath, 'utf8').match(pattern);
+		if (!match) {
+			return undefined;
+		}
+
+		const rawValue = match[1].trim();
+		if (!rawValue) {
+			return undefined;
+		}
+
+		return rawValue.replace(/^['"]|['"]$/g, '');
 	}
 
 	private async fetchSectionData(state: OverviewState): Promise<OmniProxySectionData> {
@@ -2350,9 +2421,14 @@ class OmniRouteService implements vscode.Disposable, vscode.TreeDataProvider<Tre
 		}
 
 		await this.recoverStaleNextDevServer();
+		const runtimeSecretOverrides = this.resolveRuntimeSecretOverrides();
+		if (runtimeSecretOverrides.STORAGE_ENCRYPTION_KEY) {
+			this.outputChannel.appendLine(`[${OMNIPROXY_BRAND_NAME}] reusing existing storage encryption key for embedded runtime`);
+		}
 
 		const env = {
 			...process.env,
+			...runtimeSecretOverrides,
 			PATH: `${path.dirname(this.getNodePath())}${path.delimiter}${process.env.PATH ?? ''}`,
 			HOST: this.getBaseUrl().hostname,
 			PORT: this.getBaseUrl().port,
