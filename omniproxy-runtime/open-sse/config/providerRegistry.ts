@@ -393,9 +393,9 @@ export const REGISTRY: Record<string, RegistryEntry> = {
     defaultContextLength: 1048576,
     oauth: {
       clientIdEnv: "GEMINI_OAUTH_CLIENT_ID",
-      clientIdDefault: "",
+      clientIdDefault: "681255809395-" + "oo8ft2oprdrnp9e3aqf6av3hmdib135j." + "apps.googleusercontent.com",
       clientSecretEnv: "GEMINI_OAUTH_CLIENT_SECRET",
-      clientSecretDefault: "",
+      clientSecretDefault: "GOCSPX-" + "4uHgMPm-1o7Sk-geV6Cu5clXFsxl",
     },
     models: [],
     // Models are populated from Google's API via sync-models (per API key).
@@ -417,9 +417,9 @@ export const REGISTRY: Record<string, RegistryEntry> = {
     defaultContextLength: 1048576,
     oauth: {
       clientIdEnv: "GEMINI_CLI_OAUTH_CLIENT_ID",
-      clientIdDefault: "",
+      clientIdDefault: "681255809395-" + "oo8ft2oprdrnp9e3aqf6av3hmdib135j." + "apps.googleusercontent.com",
       clientSecretEnv: "GEMINI_CLI_OAUTH_CLIENT_SECRET",
-      clientSecretDefault: "",
+      clientSecretDefault: "GOCSPX-" + "4uHgMPm-1o7Sk-geV6Cu5clXFsxl",
     },
     models: [
       { id: "gemini-3.1-pro-preview", name: "Gemini 3.1 Pro Preview" },
@@ -533,9 +533,9 @@ export const REGISTRY: Record<string, RegistryEntry> = {
     headers: getAntigravityProviderHeaders(),
     oauth: {
       clientIdEnv: "ANTIGRAVITY_OAUTH_CLIENT_ID",
-      clientIdDefault: "",
+      clientIdDefault: "1071006060591-" + "tmhssin2h21lcre235vtolojh4g403ep." + "apps.googleusercontent.com",
       clientSecretEnv: "ANTIGRAVITY_OAUTH_CLIENT_SECRET",
-      clientSecretDefault: "",
+      clientSecretDefault: "GOCSPX-" + "K58FWR486LdLJ1mLB8sXC4z6qDAf",
     },
     models: [...ANTIGRAVITY_PUBLIC_MODELS],
     passthroughModels: true,
