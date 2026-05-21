@@ -1,0 +1,219 @@
+{
+	"name": "omniroute",
+	"displayName": "OmniProxy",
+	"description": "Native OmniProxy integration for OmniCode chat models, provider accounts, proxies, and model sync.",
+	"version": "10.0.0",
+	"publisher": "vscode",
+	"license": "MIT",
+	"engines": {
+		"vscode": "^1.70.0"
+	},
+	"main": "./out/extension.js",
+	"extensionKind": [
+		"ui"
+	],
+	"activationEvents": [
+		"onStartupFinished",
+		"onCommand:omniroute.focus",
+		"onCommand:omniroute.openControlCenter",
+		"onCommand:omniroute.refresh",
+		"onCommand:omniroute.connectProvider",
+		"onCommand:omniroute.syncModels",
+		"onCommand:omniroute.addProxy",
+		"onCommand:omniroute.installDependencies",
+		"onCommand:omniroute.issueAccessKey",
+		"onCommand:omniroute.configureBaseUrl",
+		"onCommand:omniroute.configureNodePath",
+		"onCommand:omniroute.configureNpmPath",
+		"onCommand:omniroute.toggleAutoStart",
+		"onCommand:omniroute.getDashboardData",
+		"onCommand:omniroute.openModels",
+		"onCommand:omniroute.openSettings",
+		"onCommand:omniroute.showOutput"
+	],
+	"capabilities": {
+		"virtualWorkspaces": false,
+		"untrustedWorkspaces": {
+			"supported": true
+		}
+	},
+	"contributes": {
+		"commands": [
+			{
+				"command": "omniroute.focus",
+				"title": "Open OmniProxy",
+				"category": "OmniProxy"
+			},
+			{
+				"command": "omniroute.openControlCenter",
+				"title": "Open OmniProxy Control Center",
+				"category": "OmniProxy"
+			},
+			{
+				"command": "omniroute.refresh",
+				"title": "Refresh OmniProxy",
+				"category": "OmniProxy",
+				"icon": "$(refresh)"
+			},
+			{
+				"command": "omniroute.connectProvider",
+				"title": "Connect OmniProxy Provider",
+				"category": "OmniProxy",
+				"icon": "$(plug)"
+			},
+			{
+				"command": "omniroute.syncModels",
+				"title": "Sync OmniProxy Models",
+				"category": "OmniProxy",
+				"icon": "$(sync)"
+			},
+			{
+				"command": "omniroute.addProxy",
+				"title": "Add OmniProxy Proxy",
+				"category": "OmniProxy",
+				"icon": "$(globe)"
+			},
+			{
+				"command": "omniroute.installDependencies",
+				"title": "Install OmniProxy Dependencies",
+				"category": "OmniProxy"
+			},
+			{
+				"command": "omniroute.issueAccessKey",
+				"title": "Refresh OmniProxy Access Key",
+				"category": "OmniProxy"
+			},
+			{
+				"command": "omniroute.configureBaseUrl",
+				"title": "Set OmniProxy Base URL",
+				"category": "OmniProxy",
+				"icon": "$(link)"
+			},
+			{
+				"command": "omniroute.configureNodePath",
+				"title": "Set OmniProxy Node Runtime",
+				"category": "OmniProxy",
+				"icon": "$(symbol-module)"
+			},
+			{
+				"command": "omniroute.configureNpmPath",
+				"title": "Set OmniProxy npm Runtime",
+				"category": "OmniProxy",
+				"icon": "$(package)"
+			},
+			{
+				"command": "omniroute.toggleAutoStart",
+				"title": "Toggle OmniProxy Auto Start",
+				"category": "OmniProxy",
+				"icon": "$(play)"
+			},
+			{
+				"command": "omniroute.getDashboardData",
+				"title": "Get OmniProxy Dashboard Data",
+				"category": "OmniProxy"
+			},
+			{
+				"command": "omniroute.openModels",
+				"title": "Manage Language Models",
+				"category": "OmniProxy",
+				"icon": "$(gear)"
+			},
+			{
+				"command": "omniroute.openSettings",
+				"title": "Open OmniProxy Settings",
+				"category": "OmniProxy",
+				"icon": "$(settings-gear)"
+			},
+			{
+				"command": "omniroute.showOutput",
+				"title": "Show OmniProxy Output",
+				"category": "OmniProxy",
+				"icon": "$(output)"
+			}
+		],
+		"walkthroughs": [
+			{
+				"id": "omniProxyControlCenter",
+				"title": "OmniProxy Control Center",
+				"description": "Set up providers, sync custom models, manage RTK routing, and inspect OmniProxy from a native OmniCode editor page.",
+				"when": "!isWeb",
+				"steps": [
+					{
+						"id": "omniProxy.runtime",
+						"title": "Runtime and Access",
+						"description": "Fields: `omniroute.baseUrl`, `omniroute.nodePath`, `omniroute.npmPath`, `omniroute.autoStart`.\nUse this card to point OmniProxy at the right local runtime and choose whether it launches automatically.\n[Set Base URL](command:omniroute.configureBaseUrl)\n[Set Node Runtime](command:omniroute.configureNodePath)\n[Set npm Runtime](command:omniroute.configureNpmPath)\n[Toggle Auto-Start](command:omniroute.toggleAutoStart)\n[Open OmniProxy Settings](command:omniroute.openSettings)",
+						"media": {
+							"svg": "./media/omnicode-mark.svg",
+							"altText": "OmniProxy runtime and access card"
+						}
+					},
+					{
+						"id": "omniProxy.providers",
+						"title": "Provider Accounts",
+						"description": "Connect multiple provider accounts directly inside OmniCode. OmniProxy stays unlocked with local access and no sign-in wall, so accounts and access keys can be managed here immediately.\n[Connect Provider](command:omniroute.connectProvider)\n[Refresh Access Key](command:omniroute.issueAccessKey)\n[Refresh OmniProxy State](command:omniroute.refresh)",
+						"media": {
+							"svg": "./media/omnicode-mark.svg",
+							"altText": "OmniProxy provider accounts card"
+						}
+					},
+					{
+						"id": "omniProxy.models",
+						"title": "Custom Models",
+						"description": "Sync OmniProxy-managed models into the standard Language Models system so they show up in the normal picker and in custom provider management.\n[Sync OmniProxy Models](command:omniroute.syncModels)\n[Manage Language Models](command:omniroute.openModels)\n[Open Model Picker](command:workbench.action.chat.openModelPicker)",
+						"media": {
+							"svg": "./media/omnicode-mark.svg",
+							"altText": "OmniProxy custom models card"
+						}
+					},
+					{
+						"id": "omniProxy.proxy",
+						"title": "Proxy Mesh and RTK",
+						"description": "Register proxies and route AI tunnel traffic through OmniProxy to reduce token overhead and centralize provider access. Use this card for RTK and upstream proxy setup.\n[Add Proxy](command:omniroute.addProxy)\n[Refresh OmniProxy State](command:omniroute.refresh)\n[Show OmniProxy Output](command:omniroute.showOutput)",
+						"media": {
+							"svg": "./media/omnicode-mark.svg",
+							"altText": "OmniProxy proxy mesh and RTK card"
+						}
+					},
+					{
+						"id": "omniProxy.diagnostics",
+						"title": "Diagnostics and Overview",
+						"description": "Inspect logs, verify the local service, and reopen this control center at any time from the OmniProxy titlebar button.\n[Show OmniProxy Output](command:omniroute.showOutput)\n[Open OmniProxy Settings](command:omniroute.openSettings)\n[Refresh OmniProxy State](command:omniroute.refresh)",
+						"media": {
+							"svg": "./media/omnicode-mark.svg",
+							"altText": "OmniProxy diagnostics card"
+						}
+					}
+				]
+			}
+		],
+		"configuration": {
+			"title": "OmniProxy",
+			"properties": {
+				"omniroute.baseUrl": {
+					"type": "string",
+					"default": "http://127.0.0.1:20128",
+					"description": "Base URL for the local OmniProxy dashboard."
+				},
+				"omniroute.autoStart": {
+					"type": "boolean",
+					"default": true,
+					"description": "Start OmniProxy automatically when the integration is used."
+				},
+				"omniroute.nodePath": {
+					"type": "string",
+					"default": "/tmp/vscode-run-bin/node",
+					"description": "Node.js binary used to run OmniProxy."
+				},
+				"omniroute.npmPath": {
+					"type": "string",
+					"default": "/tmp/vscode-run-bin/npm",
+					"description": "npm binary used to install and run OmniProxy."
+				}
+			}
+		}
+	},
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/microsoft/vscode.git"
+	}
+}
