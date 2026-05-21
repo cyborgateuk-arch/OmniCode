@@ -41,7 +41,6 @@ The OmniProxy dashboard gives an at-a-glance view of your runtime status, connec
 
 Monitor token usage, request counts, and cost breakdowns across all connected providers.
 
-![OmniProxy Limits](docs/media/omniproxy-limits.png)
 
 ### OmniProxy Showcase
 

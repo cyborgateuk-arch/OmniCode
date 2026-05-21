@@ -124,7 +124,6 @@ OmniCode replaces the old OmniCode visual identity with the new OmniCode mark ac
 
 ### Limits and quotas section
 
-![OmniProxy limits and quotas](media/omniproxy-limits.png)
 
 ## Source map
 
