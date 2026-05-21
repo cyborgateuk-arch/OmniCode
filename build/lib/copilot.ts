@@ -6,6 +6,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
+const root = path.dirname(path.dirname(import.meta.dirname));
+
 /**
  * The platforms that @github/copilot ships platform-specific packages for.
  * These are the `@github/copilot-{platform}` optional dependency packages.
@@ -63,6 +65,16 @@ export function getCopilotExcludeFilter(platform: string, arch: string): string[
 	return ['**', ...excludes];
 }
 
+function copyIfExists(source: string, destination: string): void {
+	if (!fs.existsSync(source)) {
+		return;
+	}
+
+	fs.rmSync(destination, { recursive: true, force: true });
+	fs.mkdirSync(path.dirname(destination), { recursive: true });
+	fs.cpSync(source, destination, { recursive: true });
+}
+
 /**
  * Materializes the copilot CLI ripgrep shim directly inside the built-in copilot extension.
  *
@@ -86,6 +98,24 @@ export function prepareBuiltInCopilotRipgrepShim(platform: string, arch: string,
 	const extensionNodeModules = path.join(builtInCopilotExtensionDir, 'node_modules');
 	const copilotBase = path.join(extensionNodeModules, '@github', 'copilot');
 	const copilotSdkBase = path.join(copilotBase, 'sdk');
+	const sourceExtensionNodeModules = path.join(root, 'extensions', 'copilot', 'node_modules');
+
+	for (const dependency of ['buffer-from', 'dotenv', 'source-map', 'source-map-support']) {
+		copyIfExists(
+			path.join(sourceExtensionNodeModules, dependency),
+			path.join(extensionNodeModules, dependency)
+		);
+	}
+
+	copyIfExists(
+		path.join(sourceExtensionNodeModules, '@github', 'copilot', 'sdk', 'index.js'),
+		path.join(copilotSdkBase, 'index.js')
+	);
+	copyIfExists(
+		path.join(sourceExtensionNodeModules, '@github', `copilot-${platformArch}`),
+		path.join(extensionNodeModules, '@github', `copilot-${platformArch}`)
+	);
+
 	if (!fs.existsSync(copilotSdkBase)) {
 		throw new Error(`[prepareBuiltInCopilotRipgrepShim] Copilot SDK directory not found at ${copilotSdkBase}`);
 	}

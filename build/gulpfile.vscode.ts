@@ -44,6 +44,7 @@ const glob = promisify(globCallback);
 const rcedit = promisify(rceditCallback);
 const root = path.dirname(import.meta.dirname);
 const commit = getVersion(root);
+const OMNIPROXY_RUNTIME_DIR = 'omniproxy-runtime';
 
 // Build
 const vscodeEntryPoints = [
@@ -234,6 +235,60 @@ function computeChecksum(filename: string): string {
 		.replace(/=+$/, '');
 
 	return hash;
+}
+
+function shouldCopyOmniProxyRuntimePath(sourceRoot: string, filePath: string, includeInstalledDependencies: boolean): boolean {
+	const relativePath = path.relative(sourceRoot, filePath);
+	if (!relativePath) {
+		return true;
+	}
+
+	const pathParts = relativePath.split(path.sep);
+	const firstPart = pathParts[0];
+	if (
+		firstPart === '.next'
+		|| firstPart === 'logs'
+		|| firstPart === 'coverage'
+		|| firstPart === 'test-results'
+		|| firstPart === 'playwright-report'
+		|| firstPart === '.env'
+		|| firstPart === '.env.local'
+		|| /^\.env\..*\.local$/.test(firstPart)
+		|| relativePath.endsWith('.tsbuildinfo')
+	) {
+		return false;
+	}
+
+	if (!includeInstalledDependencies && firstPart === 'node_modules') {
+		return false;
+	}
+
+	return true;
+}
+
+function copyOmniProxyRuntimeTask(platform: string, arch: string, destinationFolderName: string) {
+	const outputDir = path.join(path.dirname(root), destinationFolderName);
+
+	return async () => {
+		const sourceRoot = path.join(root, OMNIPROXY_RUNTIME_DIR);
+		if (!fs.existsSync(sourceRoot)) {
+			return;
+		}
+
+		const versionedResourcesFolder = util.getVersionedResourcesFolder(platform, commit!);
+		const appBase = platform === 'darwin'
+			? path.join(outputDir, `${product.nameLong}.app`, 'Contents', 'Resources', 'app')
+			: path.join(outputDir, versionedResourcesFolder, 'resources', 'app');
+		const destination = path.join(appBase, OMNIPROXY_RUNTIME_DIR);
+		const includeInstalledDependencies = platform === process.platform && arch === process.arch;
+
+		await fs.promises.rm(destination, { recursive: true, force: true });
+		await fs.promises.mkdir(appBase, { recursive: true });
+		await fs.promises.cp(sourceRoot, destination, {
+			recursive: true,
+			filter: filePath => shouldCopyOmniProxyRuntimePath(sourceRoot, filePath, includeInstalledDependencies)
+		});
+	};
 }
 
 function packageTask(platform: string, arch: string, sourceFolderName: string, destinationFolderName: string, _opts?: { stats?: boolean }) {
@@ -599,6 +654,7 @@ BUILD_TARGETS.forEach(buildTarget => {
 			compileNativeExtensionsBuildTask,
 			util.rimraf(path.join(buildRoot, destinationFolderName)),
 			packageTask(platform, arch, sourceFolderName, destinationFolderName, opts),
+			copyOmniProxyRuntimeTask(platform, arch, destinationFolderName),
 			prepareCopilotRipgrepShimTask(platform, arch, destinationFolderName)
 		];
 
