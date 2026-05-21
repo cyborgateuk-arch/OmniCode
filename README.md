@@ -44,12 +44,11 @@ Monitor token usage, request counts, and cost breakdowns across all connected pr
 
 ### OmniProxy Showcase
 
-![Showcase 1](docs/media/showcase-1.jpg)
-![Showcase 2](docs/media/showcase-2.jpg)
-![Showcase 3](docs/media/showcase-3.jpg)
-![Showcase 4](docs/media/showcase-4.jpg)
 ![Showcase 5](docs/media/showcase-5.jpg)
-
+![Showcase 4](docs/media/showcase-4.jpg)
+![Showcase 3](docs/media/showcase-3.jpg)
+![Showcase 2](docs/media/showcase-2.jpg)
+![Showcase 1](docs/media/showcase-1.jpg)
 ## Key Capabilities
 
 ### 🔌 Multi-Provider Management
