@@ -7,7 +7,7 @@
 <h1 align="center">OmniCode</h1>
 
 <p align="center">
-  <strong>The AI-Native IDE with a Built-In Provider Control Center.<br/>Connect 19+ AI providers. Route across free & paid models. Zero config.</strong>
+  <strong>The AI-Native IDE with a Built-In Provider Control Center.<br/>Connect 169+ AI providers. Route across free & paid models. Zero config.</strong>
 </p>
 
 <p align="center">
@@ -45,7 +45,7 @@
 
 ## 💥 The Promise
 
-**One IDE. 19+ providers. Every AI model you need — and a free coding agent that never stops.**
+**One IDE. 169+ providers. Every AI model you need — and a free coding agent that never stops.**
 
 OmniCode is an intelligent development environment that **centralizes and streamlines every AI interaction** directly inside your editor. Stop juggling browser dashboards, dead API keys, and surprise bills. OmniCode brings it all home.
 
@@ -54,7 +54,7 @@ OmniCode is an intelligent development environment that **centralizes and stream
 | 🚫 **Never hit limits** | 💸 **$0 to start** | 📊 **Full cost visibility** |
 | Auto-fallback across providers. Quota out? Next model takes over — zero downtime. | Free-tier OAuth providers (Kiro, Qoder, GitHub Copilot, Gemini CLI). No card needed. | Real-time dashboards for token usage, per-provider costs, and model-level spend. |
 | 🔌 **Every model works** | 🧩 **One unified picker** | 🛡️ **Production-grade** |
-| 19+ providers — Claude, GPT, Gemini, DeepSeek, Grok, Qwen — through one interface. | All models synced into the native editor picker. No separate UI or fragmented experience. | Semantic caching, combo routing, budget controls, PII guards, encryption at rest. |
+| 169+ providers — Claude, GPT, Gemini, DeepSeek, Grok, Qwen — through one interface. | All models synced into the native editor picker. No separate UI or fragmented experience. | Semantic caching, combo routing, budget controls, PII guards, encryption at rest. |
 
 ---
 
@@ -133,7 +133,7 @@ Result: 4 layers of fallback = zero downtime
 
 | Feature | OmniCode | Traditional IDEs | Other AI Tools |
 |---------|----------|-------------------|----------------|
-| 🔌 Built-in AI providers | **19+ (OAuth + API key)** | 1–2 | External only |
+| 🔌 Built-in AI providers | **169+ (OAuth + API key)** | 1–2 | External only |
 | 🆓 Free-tier routing | ✅ Automatic | ❌ | ❌ |
 | 🔀 Multi-model combos | ✅ Configurable chains | ❌ | Rare |
 | 📊 Cost & usage dashboards | ✅ Native | ❌ | Separate tool |
@@ -148,7 +148,7 @@ Result: 4 layers of fallback = zero downtime
 
 ---
 
-## 🔌 19+ AI Providers — Unified Model Picker
+## 🔌 169+ AI Providers — Unified Model Picker
 
 The most comprehensive provider ecosystem of any AI-native IDE. Connect via **OAuth** (one-click) or **API key** — all models appear instantly in the native editor picker.
 
@@ -258,7 +258,7 @@ A comprehensive, **built-in management workspace** embedded directly in the edit
 | Section | Description |
 |---------|-------------|
 | 🏠 **Home** | Global runtime status, provider overview, model sync state, and proxy health |
-| 🔌 **Providers** | Connect, test, and manage integrations for 19+ AI providers with live status cards |
+| 🔌 **Providers** | Connect, test, and manage integrations for 169+ AI providers with live status cards |
 | 🎯 **Combos** | Configure multi-model routing chains and automated fallback strategies |
 | 🧪 **Batch Testing** | Evaluate and test prompts across multiple models simultaneously |
 | 💰 **Costs** | Detailed tracking of token usage and financial spend per provider and model |
@@ -307,7 +307,7 @@ flowchart TD
 | 🎨 Resources | `resources/` | Icon assets for macOS, Windows, Linux, and web |
 | 🛡️ OmniProxy Dashboard | `src/vs/workbench/contrib/chat/browser/omniProxyManagement/` | Native management dashboard source code |
 | ⚙️ OmniProxy Runtime | `omniproxy-runtime/` | Embedded Node.js backend for AI routing |
-| 🔗 Provider Registry | `omniproxy-runtime/open-sse/config/providerRegistry.ts` | Single source of truth for all 19+ providers |
+| 🔗 Provider Registry | `omniproxy-runtime/open-sse/config/providerRegistry.ts` | Single source of truth for all 169+ providers |
 | 🧩 Extension Bridge | `extensions/omniroute/` | Connects workbench UI to OmniProxy runtime |
 | 🧠 Model Discovery | `src/vs/workbench/contrib/chat/common/languageModels.ts` | Core logic for model discovery and endpoint integration |
 
@@ -535,7 +535,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
 ### What makes OmniCode searchable
 
 - **AI-native IDE** — not just a plugin, but a full editor with AI built in
-- **Multi-provider routing** — the only IDE that routes across 19+ AI providers
+- **Multi-provider routing** — the only IDE that routes across 169+ AI providers
 - **Free coding agent** — $0 to start, with free-tier providers and semantic caching
 - **Built-in dashboard** — no external tools needed for provider management
 - **Open source** — MIT licensed, fully auditable, community-driven
