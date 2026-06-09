@@ -87,7 +87,7 @@ import { IChatSessionProviderOptionGroup, IChatSessionProviderOptionItem, IChatS
 import { ChatAgentLocation, ChatConfiguration, ChatModeKind, ChatPermissionLevel, isChatPermissionLevel } from '../../../common/constants.js';
 import { IChatEditingSession, IModifiedFileEntry, ModifiedFileEntryState } from '../../../common/editing/chatEditingService.js';
 import { ILanguageModelChatMetadata, ILanguageModelChatMetadataAndIdentifier, ILanguageModelsService } from '../../../common/languageModels.js';
-import { IChatModelInputState, IChatRequestModeInfo, IInputModel } from '../../../common/model/chatModel.js';
+import { IChatModelInputState, IChatRequestModeInfo, IInputModel, IChatModel } from '../../../common/model/chatModel.js';
 import { filterModelsForSession, findDefaultModel, hasModelsTargetingSession, isModelValidForSession, mergeModelsWithCache, resolveModelFromSyncState, shouldResetModelToDefault, shouldResetOnModelListChange, shouldRestoreLateArrivingModel, shouldRestorePersistedModel } from './chatModelSelectionLogic.js';
 import { getChatSessionType, LocalChatSessionUri } from '../../../common/model/chatUri.js';
 import { IChatResponseViewModel, isResponseVM } from '../../../common/model/chatViewModel.js';
@@ -398,6 +398,9 @@ export class ChatInputPart extends Disposable implements IHistoryNavigationWidge
 	private chatSessionHasTargetedModels: IContextKey<boolean>;
 	private modelWidget: ModelPickerActionItem | undefined;
 	private modeWidget: ModePickerActionItem | undefined;
+
+
+	private readonly _activeModel = observableValue<IChatModel | undefined>(this, undefined);
 	private permissionWidget: PermissionPickerActionItem | undefined;
 	private readonly permissionWidgetDisposeListener = this._register(new MutableDisposable<IDisposable>());
 	private sessionTargetWidget: SessionTypePickerActionItem | undefined;
@@ -883,8 +886,15 @@ export class ChatInputPart extends Disposable implements IHistoryNavigationWidge
 	}
 
 	private _createModelPickerDelegate(): IModelPickerDelegate {
+		const activeComboModelObservable = derived(this, reader => {
+			const model = this._activeModel.read(reader);
+			if (!model) { return undefined; }
+			return model.currentActiveComboModel.read(reader);
+		});
+
 		return {
 			currentModel: this._currentLanguageModel,
+			currentActiveComboModel: activeComboModelObservable,
 			setModel: (model: ILanguageModelChatMetadataAndIdentifier) => {
 				this._waitForPersistedLanguageModel.clear();
 				this._waitForSessionHistoryLanguageModel.clear();
@@ -2130,6 +2140,7 @@ export class ChatInputPart extends Disposable implements IHistoryNavigationWidge
 
 	render(container: HTMLElement, initialValue: string, widget: IChatWidget) {
 		this._widget = widget;
+		this._activeModel.set(widget.viewModel?.model, undefined);
 		this.getVisibleOptionGroupsModeAndUpdateContextKeys(this.getCurrentSessionResource());
 
 		// Initialize lock state when rendering with a pre-selected session provider (e.g., welcome view restore)
@@ -2142,6 +2153,7 @@ export class ChatInputPart extends Disposable implements IHistoryNavigationWidge
 		}
 
 		this._register(widget.onDidChangeViewModel((e: IChatWidgetViewModelChangeEvent) => {
+			this._activeModel.set(widget.viewModel?.model, undefined);
 			this._pendingDelegationTarget = undefined;
 			// Update agentSessionType when view model changes
 			this.updateAgentSessionTypeContextKey();

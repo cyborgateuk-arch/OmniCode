@@ -1478,166 +1478,124 @@ export async function handleComboChat({
     log.info("COMBO", `[#401] Context caching: pinned model=${pinnedModel}`);
   }
   const clientRequestedStream = body?.stream === true;
-  // Wrap handleSingleModel to inject context caching tag on response (#401)
-  const handleSingleModelWrapped = combo.context_cache_protection
-    ? async (b, modelStr, target) => {
-        const res = await handleSingleModel(b, modelStr, target);
-        if (!res.ok) return res;
+  // Wrap handleSingleModel to inject tag on response for UI tracking & cache protection (#401)
+  const handleSingleModelWrapped = async (b: any, modelStr: string, target: any) => {
+    const res = await handleSingleModel(b, modelStr, target);
+    if (!res.ok) return res;
 
-        // Non-streaming: inject tag into JSON response
-        // Fix #721: Use OpenAI choices format (json.choices[0].message) not json.messages
-        if (!b.stream) {
-          try {
-            const json = await res.clone().json();
-            const choice = json?.choices?.[0];
-            if (choice?.message) {
-              // Wrap single message in array for injectModelTag, then unwrap
-              const tagged = injectModelTag([choice.message], modelStr);
-              // If the message had tool_calls but no string content, injectModelTag
-              // appends a synthetic assistant message — use the last one
-              const taggedMsg = tagged.at(-1);
-              const updatedJson = {
-                ...json,
-                choices: [{ ...choice, message: taggedMsg }, ...(json.choices?.slice(1) || [])],
-              };
-              return new Response(JSON.stringify(updatedJson), {
-                status: res.status,
-                headers: res.headers,
-              });
-            }
-          } catch {
-            /* non-JSON — skip tagging */
-          }
-          return res;
+    // Non-streaming: inject tag into JSON response
+    // Fix #721: Use OpenAI choices format (json.choices[0].message) not json.messages
+    if (!b.stream) {
+      try {
+        const json = await res.clone().json();
+        const choice = json?.choices?.[0];
+        if (choice?.message) {
+          // Wrap single message in array for injectModelTag, then unwrap
+          const tagged = injectModelTag([choice.message], modelStr);
+          // If the message had tool_calls but no string content, injectModelTag
+          // appends a synthetic assistant message — use the last one
+          const taggedMsg = tagged.at(-1);
+          const updatedJson = {
+            ...json,
+            choices: [{ ...choice, message: taggedMsg }, ...(json.choices?.slice(1) || [])],
+          };
+          return new Response(JSON.stringify(updatedJson), {
+            status: res.status,
+            headers: res.headers,
+          });
+        }
+      } catch {
+        /* non-JSON — skip tagging */
+      }
+      return res;
+    }
+
+    // Streaming (Fix #490 + #511): prepend omniModel tag into the first
+    // non-empty content chunk so it arrives BEFORE finish_reason:stop.
+    // SDKs close the connection on finish_reason, so anything sent after
+    // that marker is silently dropped.
+    if (!res.body) return res;
+    const tagContent = `<!-- omniModel: ${modelStr} -->`;
+    const encoder = new TextEncoder();
+    const decoder = new TextDecoder();
+    let tagInjected = false;
+
+    const transform = new TransformStream({
+      transform(chunk, controller) {
+        if (tagInjected) {
+          // Already injected — passthrough
+          controller.enqueue(chunk);
+          return;
         }
 
-        // Streaming (Fix #490 + #511): prepend omniModel tag into the first
-        // non-empty content chunk so it arrives BEFORE finish_reason:stop.
-        // SDKs close the connection on finish_reason, so anything sent after
-        // that marker is silently dropped.
-        if (!res.body) return res;
-        const tagContent = `<omniModel>${modelStr}</omniModel>`;
-        const encoder = new TextEncoder();
-        const decoder = new TextDecoder();
-        let tagInjected = false;
+        const text = decoder.decode(chunk, { stream: true });
 
-        const transform = new TransformStream({
-          transform(chunk, controller) {
-            if (tagInjected) {
-              // Already injected — passthrough
-              controller.enqueue(chunk);
-              return;
-            }
+        // Fix #721: Look for either non-empty content OR tool_calls in the
+        // SSE data. Tool-call-only responses have content:null, so we inject
+        // the tag when we see a finish_reason approaching, or on first content.
+        const contentMatch = RegExp(/"content":"([^"]+)/).exec(text);
+        if (contentMatch) {
+          // Inject tag at the beginning of the first content value
+          const injected = text.replace(
+            /"content":"([^"]+)/,
+            `"content":"${tagContent.replaceAll("\\", "\\\\").replaceAll('"', String.raw`\"`)}$1`
+          );
+          tagInjected = true;
+          controller.enqueue(encoder.encode(injected));
+          return;
+        }
 
-            const text = decoder.decode(chunk, { stream: true });
+        // Fix #721: For tool-call-only streams, inject the tag when we see
+        // the finish_reason chunk (before it reaches the client SDK which
+        // would close the connection). This ensures the tag roundtrips
+        // through the conversation history even when there's no text content.
+        if (text.includes('"finish_reason"') && !text.includes('"finish_reason":null')) {
+          // Inject a content chunk with the tag just before this finish chunk
+          const tagChunk = `data: ${JSON.stringify({
+            choices: [
+              {
+                delta: { content: tagContent },
+                index: 0,
+                finish_reason: null,
+              },
+            ],
+          })}\n\n`;
+          tagInjected = true;
+          controller.enqueue(encoder.encode(tagChunk));
+          controller.enqueue(chunk);
+          return;
+        }
 
-            // Fix #721: Look for either non-empty content OR tool_calls in the
-            // SSE data. Tool-call-only responses have content:null, so we inject
-            // the tag when we see a finish_reason approaching, or on first content.
-            const contentMatch = RegExp(/"content":"([^"]+)/).exec(text);
-            if (contentMatch) {
-              // Inject tag at the beginning of the first content value
-              const injected = text.replace(
-                /"content":"([^"]+)/,
-                `"content":"${tagContent.replaceAll("\\", "\\\\").replaceAll('"', String.raw`\"`)}$1`
-              );
-              tagInjected = true;
-              controller.enqueue(encoder.encode(injected));
-              return;
-            }
+        // No content yet — passthrough
+        controller.enqueue(chunk);
+      },
+      flush(controller) {
+        // If stream ends without ever finding content (edge case),
+        // inject tag as a standalone chunk before the stream closes
+        if (!tagInjected) {
+          const tagChunk = `data: ${JSON.stringify({
+            choices: [
+              {
+                delta: { content: tagContent },
+                index: 0,
+                finish_reason: null,
+              },
+            ],
+          })}\n\n`;
+          controller.enqueue(encoder.encode(tagChunk));
+        }
+      },
+    });
 
-            // Fix #721: For tool-call-only streams, inject the tag when we see
-            // the finish_reason chunk (before it reaches the client SDK which
-            // would close the connection). This ensures the tag roundtrips
-            // through the conversation history even when there's no text content.
-            if (text.includes('"finish_reason"') && !text.includes('"finish_reason":null')) {
-              // Inject a content chunk with the tag just before this finish chunk
-              const tagChunk = `data: ${JSON.stringify({
-                choices: [
-                  {
-                    delta: { content: tagContent },
-                    index: 0,
-                    finish_reason: null,
-                  },
-                ],
-              })}\n\n`;
-              tagInjected = true;
-              controller.enqueue(encoder.encode(tagChunk));
-              controller.enqueue(chunk);
-              return;
-            }
-
-            // No content yet — passthrough
-            controller.enqueue(chunk);
-          },
-          flush(controller) {
-            // If stream ends without ever finding content (edge case),
-            // inject tag as a standalone chunk before the stream closes
-            if (!tagInjected) {
-              const tagChunk = `data: ${JSON.stringify({
-                choices: [
-                  {
-                    delta: { content: tagContent },
-                    index: 0,
-                    finish_reason: null,
-                  },
-                ],
-              })}\n\n`;
-              controller.enqueue(encoder.encode(tagChunk));
-            }
-          },
-        });
-
-        // FIX #585: Sanitize outbound stream — strip <omniModel> tags from
-        // visible content so they don't leak to the user. The tag is still
-        // present in the full response for round-trip context pinning, but
-        // we clean it from each SSE chunk's content field before delivery.
-        //
-        // IMPORTANT: Use a SEPARATE TextDecoder from the transform stream above.
-        // The transform stream's decoder accumulates UTF-8 state; reusing it here
-        // would corrupt multi-byte characters split across chunk boundaries.
-        const sanitizeDecoder = new TextDecoder();
-        const sanitize = new TransformStream({
-          transform(chunk, controller) {
-            const text = sanitizeDecoder.decode(chunk, { stream: true });
-            if (text) {
-              if (text.includes("<omniModel>")) {
-                const cleaned = text.replaceAll(
-                  /(?:\\n|\n|\r)*<omniModel>[^<]+<\/omniModel>(?:\\n|\n|\r)*/g,
-                  ""
-                );
-                if (cleaned) controller.enqueue(encoder.encode(cleaned));
-              } else {
-                controller.enqueue(encoder.encode(text));
-              }
-            }
-          },
-          flush(controller) {
-            const tail = sanitizeDecoder.decode();
-            if (tail) {
-              if (tail.includes("<omniModel>")) {
-                const cleaned = tail.replaceAll(
-                  /(?:\\n|\n|\r)*<omniModel>[^<]+<\/omniModel>(?:\\n|\n|\r)*/g,
-                  ""
-                );
-                if (cleaned) controller.enqueue(encoder.encode(cleaned));
-              } else {
-                controller.enqueue(encoder.encode(tail));
-              }
-            }
-          },
-        });
-
-        const transformedStream = res.body.pipeThrough(transform).pipeThrough(sanitize);
-        // Add model info as response header for clients that support it
-        const headers = new Headers(res.headers);
-        headers.set("X-OmniRoute-Model", modelStr);
-        return new Response(transformedStream, {
-          status: res.status,
-          headers,
-        });
-      }
-    : handleSingleModel;
+    const transformedStream = res.body.pipeThrough(transform);
+    // Add model info as response header for clients that support it
+    const headers = new Headers(res.headers);
+    headers.set("X-OmniRoute-Model", modelStr);
+    return new Response(transformedStream, {
+      status: res.status,
+      headers,
+    });
+  };
   // ─────────────────────────────────────────────────────────────────────────
 
   // Route to pinned model if context caching specifies one (Fix #679)

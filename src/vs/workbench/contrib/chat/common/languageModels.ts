@@ -450,6 +450,11 @@ export interface ILanguageModelsService {
 	clearRecentlyUsedList(): void;
 
 	/**
+	 * Removes a specific model from the recently used list.
+	 */
+	removeFromRecentlyUsedList(modelIdentifier: string): void;
+
+	/**
 	 * Returns the pinned model identifiers, in the order they were pinned.
 	 */
 	getPinnedModelIds(): string[];
@@ -473,6 +478,16 @@ export interface ILanguageModelsService {
 	 * Fires when the pinned models list changes.
 	 */
 	readonly onDidChangePinnedModels: Event<void>;
+
+	/**
+	 * Returns the hidden model identifiers.
+	 */
+	getHiddenModelIds(): string[];
+
+	/**
+	 * Hides a model from the model picker.
+	 */
+	hideModel(modelIdentifier: string): void;
 
 	/**
 	 * Returns the models from the control manifest,
@@ -636,6 +651,7 @@ export class LanguageModelsService implements ILanguageModelsService {
 
 	private _recentlyUsedModelIds: string[] = [];
 	private _pinnedModelIds: string[] = [];
+	private _hiddenModelIds: string[] = [];
 
 	private readonly _onDidChangeModelsControlManifest = this._store.add(new Emitter<IModelsControlManifest>());
 	readonly onDidChangeModelsControlManifest = this._onDidChangeModelsControlManifest.event;
@@ -667,6 +683,7 @@ export class LanguageModelsService implements ILanguageModelsService {
 		this._hasNonCopilotUserSelectableModels = ChatContextKeys.nonCopilotLanguageModelsAreUserSelectable.bindTo(_contextKeyService);
 		this._recentlyUsedModelIds = this._readRecentlyUsedModels();
 		this._pinnedModelIds = this._readPinnedModels();
+		this._hiddenModelIds = this._readHiddenModels();
 		this._initChatControlData();
 
 		this._store.add(this.onDidChangeLanguageModels(() => {
@@ -2205,6 +2222,14 @@ export class LanguageModelsService implements ILanguageModelsService {
 		this._saveRecentlyUsedModels();
 	}
 
+	removeFromRecentlyUsedList(modelIdentifier: string): void {
+		const index = this._recentlyUsedModelIds.indexOf(modelIdentifier);
+		if (index !== -1) {
+			this._recentlyUsedModelIds.splice(index, 1);
+			this._saveRecentlyUsedModels();
+		}
+	}
+
 	//#endregion
 
 	//#region Pinned models
@@ -2242,6 +2267,30 @@ export class LanguageModelsService implements ILanguageModelsService {
 
 	isModelPinned(modelIdentifier: string): boolean {
 		return modelIdentifier !== AUTO_MODEL_IDENTIFIER && this._pinnedModelIds.includes(modelIdentifier);
+	}
+
+	//#endregion
+
+	//#region Hidden models
+
+	private _readHiddenModels(): string[] {
+		return this._storageService.getObject<string[]>('chatModelHidden', StorageScope.PROFILE, []);
+	}
+
+	private _saveHiddenModels(): void {
+		this._storageService.store('chatModelHidden', this._hiddenModelIds, StorageScope.PROFILE, StorageTarget.USER);
+	}
+
+	getHiddenModelIds(): string[] {
+		return [...this._hiddenModelIds];
+	}
+
+	hideModel(modelIdentifier: string): void {
+		if (!this._hiddenModelIds.includes(modelIdentifier)) {
+			this._hiddenModelIds.push(modelIdentifier);
+			this._saveHiddenModels();
+			this._onLanguageModelChange.fire(modelIdentifier);
+		}
 	}
 
 	//#endregion

@@ -15,6 +15,7 @@ import { IChatSessionContext, IChatSessionTiming } from '../../../common/chatSer
 export class MockChatModel extends Disposable implements IChatModel {
 	readonly onDidDispose = this._register(new Emitter<void>()).event;
 	readonly onDidChange = this._register(new Emitter<IChatChangeEvent>()).event;
+	readonly currentActiveComboModel = observableValue<string | undefined>('currentActiveComboModel', undefined);
 	sessionId = '';
 	readonly timestamp = 0;
 	readonly timing: IChatSessionTiming = { created: Date.now(), lastRequestStarted: undefined, lastRequestEnded: undefined };

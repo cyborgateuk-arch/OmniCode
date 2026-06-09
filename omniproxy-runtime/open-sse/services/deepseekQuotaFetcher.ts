@@ -32,7 +32,7 @@ const DEEPSEEK_CONFIG = {
 };
 
 // Cache TTL — short enough to be reactive, long enough to avoid rate limits
-const CACHE_TTL_MS = 60_000; // 60 seconds
+const CACHE_TTL_MS = parseInt(process.env.DEEPSEEK_QUOTA_CACHE_TTL_MS || '60000', 10); // 60 seconds
 
 // DeepSeek quota interface
 export interface DeepseekQuota extends QuotaInfo {

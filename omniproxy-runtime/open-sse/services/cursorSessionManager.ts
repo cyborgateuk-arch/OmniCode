@@ -33,7 +33,7 @@
 import type { ClientHttp2Session, ClientHttp2Stream } from "node:http2";
 import { encodeExecMcpResult } from "../utils/cursorAgentProtobuf.ts";
 
-const DEFAULT_IDLE_TTL_MS = 5 * 60 * 1000;
+const DEFAULT_IDLE_TTL_MS = parseInt(process.env.CURSOR_SESSION_IDLE_TTL_MS || String(5 * 60 * 1000), 10);
 
 export type CursorSession = {
   conversationId: string;

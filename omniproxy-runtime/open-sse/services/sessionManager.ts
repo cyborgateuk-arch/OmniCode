@@ -37,7 +37,7 @@ interface SessionBody {
 const sessions = new Map<string, SessionEntry>();
 
 // Auto-cleanup sessions older than 30 minutes
-const SESSION_TTL_MS = 30 * 60 * 1000;
+const SESSION_TTL_MS = parseInt(process.env.SESSION_TTL_MS || String(30 * 60 * 1000), 10);
 const _cleanupTimer = setInterval(() => {
   const now = Date.now();
   for (const [key, entry] of sessions) {

@@ -182,7 +182,7 @@ function createModelItem(
 	vendorLabel?: string,
 	isUBB?: boolean,
 	ariaDescription?: string,
-	pinAction?: IAction,
+	toolbarActions?: IAction[],
 ): IActionListItem<IActionWidgetDropdownAction> {
 	const hover = model && openerService ? getModelHoverContent(model, openerService, isUBB) : undefined;
 	return {
@@ -198,7 +198,7 @@ function createModelItem(
 		badge: vendorLabel,
 		hover: hover ? { content: hover.element, disposable: hover.disposable } : undefined,
 		tooltip: action.tooltip,
-		toolbarActions: pinAction ? [pinAction] : undefined,
+		toolbarActions: toolbarActions?.length ? toolbarActions : undefined,
 		submenuActions: action.toolbarActions?.length ? action.toolbarActions : undefined,
 	};
 }
@@ -400,6 +400,11 @@ export function buildModelPickerItems(
 	openerService?: IOpenerService,
 	isUBB?: boolean,
 ): IActionListItem<IActionWidgetDropdownAction>[] {
+	const hiddenModelIds = languageModelsService?.getHiddenModelIds() || [];
+	models = models.filter(m => !hiddenModelIds.includes(m.identifier));
+	recentModelIds = recentModelIds.filter(id => !hiddenModelIds.includes(id));
+	pinnedModelIds = pinnedModelIds.filter(id => !hiddenModelIds.includes(id));
+
 	const items: IActionListItem<IActionWidgetDropdownAction>[] = [];
 	if (models.length === 0) {
 		items.push(createModelItem({
@@ -412,6 +417,29 @@ export function buildModelPickerItems(
 			run: () => { }
 		}));
 	}
+
+	// Helper to create toolbar actions (pin/unpin, remove) for a model
+	const makeToolbarActions = (model: ILanguageModelChatMetadataAndIdentifier) => {
+		const actions: IAction[] = [];
+		if (onTogglePin) {
+			actions.push(createPinAction(model.identifier, pinnedModelIds.includes(model.identifier), onTogglePin));
+		}
+		if (languageModelsService) {
+			actions.push(toAction({
+				id: `hide.${model.identifier}`,
+				label: localize('chat.modelPicker.remove', "Remove from Picker"),
+				class: ThemeIcon.asClassName(Codicon.trash),
+				run: () => {
+					languageModelsService.hideModel(model.identifier);
+					languageModelsService.removeFromRecentlyUsedList(model.identifier);
+					if (pinnedModelIds.includes(model.identifier)) {
+						languageModelsService.unpinModel(model.identifier);
+					}
+				}
+			}));
+		}
+		return actions.length ? actions : undefined;
+	};
 
 	if (useGroupedModelPicker) {
 		let otherModels: ILanguageModelChatMetadataAndIdentifier[] = [];
@@ -470,10 +498,6 @@ export function buildModelPickerItems(
 			);
 			const showGroupLabel = allGroupKeys.size > 1;
 
-			// Helper to create a pin/unpin toolbar action for a model
-			const makePinAction = (model: ILanguageModelChatMetadataAndIdentifier) =>
-				onTogglePin ? createPinAction(model.identifier, pinnedModelIds.includes(model.identifier), onTogglePin) : undefined;
-
 			// --- 2. Pinned models ---
 			const pinnedSet = new Set(pinnedModelIds);
 			const pinnedModels: ILanguageModelChatMetadataAndIdentifier[] = [];
@@ -494,7 +518,7 @@ export function buildModelPickerItems(
 						? getProviderGroupForModel(model, modelToGroup, languageModelsService!).groupName
 						: undefined;
 					const { action: pinnedAction, ariaDescription: pinnedAriaDesc } = createModelAction(model, selectedModelId, onSelect, languageModelsService!, undefined, showGroupLabel, isUBB);
-					items.push(createModelItem(pinnedAction, model, openerService, groupLabel, isUBB, pinnedAriaDesc, makePinAction(model)));
+					items.push(createModelItem(pinnedAction, model, openerService, groupLabel, isUBB, pinnedAriaDesc, makeToolbarActions(model)));
 				}
 			}
 
@@ -595,7 +619,7 @@ export function buildModelPickerItems(
 							? getProviderGroupForModel(item.model, modelToGroup, languageModelsService!).groupName
 							: undefined;
 						const { action: promotedAction, ariaDescription: promotedAriaDesc } = createModelAction(item.model, selectedModelId, onSelect, languageModelsService!, undefined, showGroupLabel, isUBB);
-						items.push(createModelItem(promotedAction, item.model, openerService, groupLabel, isUBB, promotedAriaDesc, makePinAction(item.model)));
+						items.push(createModelItem(promotedAction, item.model, openerService, groupLabel, isUBB, promotedAriaDesc, makeToolbarActions(item.model)));
 					} else {
 						items.push(createUnavailableModelItem(item.id, item.entry, item.reason, manageSettingsUrl, updateStateType, chatEntitlementService));
 					}
@@ -685,7 +709,7 @@ export function buildModelPickerItems(
 							items.push(createUnavailableModelItem(model.metadata.id, entry, 'update', manageSettingsUrl, updateStateType, chatEntitlementService, ModelPickerSection.Other));
 						} else {
 							const { action: bucketAction, ariaDescription: bucketAriaDesc } = createModelAction(model, selectedModelId, onSelect, languageModelsService!, ModelPickerSection.Other, showGroupHeaders, isUBB);
-							items.push(createModelItem(bucketAction, model, openerService, undefined, isUBB, bucketAriaDesc, makePinAction(model)));
+							items.push(createModelItem(bucketAction, model, openerService, undefined, isUBB, bucketAriaDesc, makeToolbarActions(model)));
 						}
 					}
 				}
@@ -719,7 +743,7 @@ export function buildModelPickerItems(
 			});
 		for (const model of sortedModels) {
 			const { action: flatAction, ariaDescription: flatAriaDesc } = createModelAction(model, selectedModelId, onSelect, languageModelsService!, undefined, undefined, isUBB);
-			items.push(createModelItem(flatAction, model, openerService, undefined, isUBB, flatAriaDesc));
+			items.push(createModelItem(flatAction, model, openerService, undefined, isUBB, flatAriaDesc, makeToolbarActions(model)));
 		}
 	}
 
@@ -830,6 +854,7 @@ export class ModelPickerWidget extends Disposable {
 	private _selectedModel: ILanguageModelChatMetadataAndIdentifier | undefined;
 	private _badge: ModelPickerBadge | undefined;
 	private _hideChevrons: IObservable<boolean> | undefined;
+	private _activeComboModel: string | undefined;
 
 	private _domNode: HTMLElement | undefined;
 	private _badgeIcon: HTMLElement | undefined;
@@ -886,6 +911,11 @@ export class ModelPickerWidget extends Disposable {
 
 	setSelectedModel(model: ILanguageModelChatMetadataAndIdentifier | undefined): void {
 		this._selectedModel = model;
+		this._renderLabel();
+	}
+
+	setActiveComboModel(activeComboModel: string | undefined): void {
+		this._activeComboModel = activeComboModel;
 		this._renderLabel();
 	}
 
@@ -1130,7 +1160,10 @@ export class ModelPickerWidget extends Disposable {
 		if (statusIcon) {
 			nameChildren.push(renderIcon(statusIcon));
 		}
-		const modelLabel = name ?? localize('chat.modelPicker.auto', "Auto");
+		let modelLabel = name ?? localize('chat.modelPicker.auto', "Auto");
+		if (this._activeComboModel) {
+			modelLabel += ` (${this._activeComboModel})`;
+		}
 		// In PRU mode, append the config description (e.g. thinking effort) to the button label
 		const isUBB = !!this._entitlementService.quotas.usageBasedBilling;
 		const configDescription = !isUBB && this._selectedModel
