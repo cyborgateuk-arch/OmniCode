@@ -63,7 +63,7 @@ const REPO_ROOT = path.join(__dirname, '..');
 
 async function removeCopilotCLIShim() {
 	const shimsPath = path.join(REPO_ROOT, 'node_modules', '@github', 'copilot', 'shims.txt');
-	await fs.promises.rm(shimsPath, { force: true }).catch(() => { /* ignore */ });
+	// await fs.promises.rm(shimsPath, { force: true }).catch(() => { /* ignore */ });
 }
 
 /**

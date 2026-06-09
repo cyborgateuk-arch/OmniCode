@@ -13,9 +13,10 @@
  *
  * Priority (lowest → highest):
  *   1. Auto-generated defaults
- *   2. {DATA_DIR}/server.env  (persisted on first boot)
- *   3. Preferred config .env  (DATA_DIR/.env -> ~/.omniroute/.env -> ./.env)
- *   4. process.env            (shell / Docker -e flags, highest priority)
+ *   2. Legacy ~/.omniproxy/server.env
+ *   3. {DATA_DIR}/server.env  (persisted on first boot)
+ *   4. Preferred config .env  (DATA_DIR/.env -> ~/.omniroute/.env -> ./.env)
+ *   5. process.env            (shell / Docker -e flags, highest priority)
  */
 
 import { randomBytes, createDecipheriv, scryptSync, createHash } from "node:crypto";
@@ -65,6 +66,22 @@ function getPreferredEnvFilePath(env = process.env) {
   candidates.push(join(process.cwd(), ".env"));
 
   return candidates.find((filePath) => existsSync(filePath)) ?? null;
+}
+
+function getLegacyServerEnvPath(env = process.env) {
+  if (process.platform === "win32") {
+    const appData = env.APPDATA || join(homedir(), "AppData", "Roaming");
+    return join(appData, "omniproxy", "server.env");
+  }
+  return join(homedir(), ".omniproxy", "server.env");
+}
+
+function restoreMissingSecretsFromLegacyEnv(merged, legacyPersisted) {
+  for (const key of ["JWT_SECRET", "API_KEY_SECRET", "STORAGE_ENCRYPTION_KEY", "STORAGE_ENCRYPTION_KEY_VERSION"]) {
+    if (!merged[key]?.trim() && legacyPersisted[key]?.trim()) {
+      merged[key] = legacyPersisted[key];
+    }
+  }
 }
 
 function hasEncryptedCredentials(dataDir) {
@@ -147,10 +164,12 @@ export function bootstrapEnv({ dataDirOverride, quiet = false } = {}) {
 
   // ── Layer 1: Load persisted server.env ────────────────────────────────────
   let persisted = parseEnvFile(serverEnvPath);
+  const legacyPersisted = parseEnvFile(getLegacyServerEnvPath(process.env));
 
   // ── Layer 2: Load the same preferred .env that the CLI wrapper uses ───────
   // This keeps run-next / run-standalone consistent with `bin/omniroute.mjs`.
-  const merged = { ...persisted, ...preferredEnv, ...process.env };
+  const merged = { ...legacyPersisted, ...persisted, ...preferredEnv, ...process.env };
+  restoreMissingSecretsFromLegacyEnv(merged, legacyPersisted);
 
   // ── Auto-generate required secrets ────────────────────────────────────────
   let needsPersist = false;
@@ -168,7 +187,9 @@ export function bootstrapEnv({ dataDirOverride, quiet = false } = {}) {
         `Refusing to auto-generate STORAGE_ENCRYPTION_KEY: encrypted credentials already exist in ${join(
           dataDir,
           "storage.sqlite"
-        )}. Restore the key via ${preferredEnvPath ?? "an appropriate .env file"}, ${serverEnvPath}, or process.env.`
+        )}. Restore the key via ${preferredEnvPath ?? "an appropriate .env file"}, ${serverEnvPath}, ${getLegacyServerEnvPath(
+          process.env
+        )}, or process.env.`
       );
     }
     persisted.STORAGE_ENCRYPTION_KEY = randomBytes(32).toString("hex");

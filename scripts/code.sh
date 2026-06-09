@@ -51,8 +51,13 @@ function code() {
 		DISABLE_TEST_EXTENSION=""
 	fi
 
+	OMNIROUTE_EXTENSION_DEV_ARG=""
+	if [[ -d "$ROOT/extensions/omniroute" && "$@" != *"--extensionDevelopmentPath"* && "$@" != *"--extension-development-path"* ]]; then
+		OMNIROUTE_EXTENSION_DEV_ARG="--extensionDevelopmentPath=$ROOT/extensions/omniroute"
+	fi
+
 	# Launch Code
-	exec "$CODE" . $DISABLE_TEST_EXTENSION "$@"
+	exec "$CODE" . $DISABLE_TEST_EXTENSION "$@" $OMNIROUTE_EXTENSION_DEV_ARG
 }
 
 function code-wsl()

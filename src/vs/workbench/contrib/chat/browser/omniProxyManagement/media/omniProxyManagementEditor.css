@@ -493,3 +493,239 @@
 		align-items: flex-start;
 	}
 }
+
+/* Custom Layouts for Dashboards */
+.omni-proxy-quota-grid, .omni-proxy-cost-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+	gap: 16px;
+	margin-top: 16px;
+}
+
+.omni-proxy-quota-item {
+	padding: 16px;
+	background-color: var(--vscode-editorWidget-background);
+	border-radius: 8px;
+	border: 1px solid var(--vscode-widget-border);
+}
+
+.omni-proxy-quota-item-header {
+	display: flex;
+	justify-content: space-between;
+	align-items: flex-start;
+}
+
+.omni-proxy-quota-item-title {
+	font-weight: 600;
+	font-size: 13px;
+}
+
+.omni-proxy-quota-item-subtitle {
+	font-size: 11px;
+	color: var(--vscode-descriptionForeground);
+	margin-top: 2px;
+}
+
+.omni-proxy-quota-item-badge {
+	font-size: 11px;
+	padding: 2px 6px;
+	border-radius: 4px;
+	background-color: var(--vscode-badge-background);
+	color: var(--vscode-badge-foreground);
+}
+
+.omni-proxy-progress-container {
+	margin-top: 16px;
+}
+
+.omni-proxy-progress-labels {
+	display: flex;
+	justify-content: space-between;
+	margin-bottom: 6px;
+	font-size: 12px;
+}
+
+.omni-proxy-progress-label-title {
+	color: var(--vscode-descriptionForeground);
+}
+
+.omni-proxy-progress-label-value {
+	font-weight: bold;
+	color: var(--vscode-foreground);
+}
+
+.omni-proxy-progress-bar-bg {
+	height: 8px;
+	background-color: var(--vscode-scrollbarSlider-background);
+	border-radius: 4px;
+	overflow: hidden;
+}
+
+.omni-proxy-progress-bar-fill {
+	height: 100%;
+}
+
+.omni-proxy-quota-reset {
+	margin-top: 12px;
+	font-size: 11px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.omni-proxy-hero-metrics {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+	gap: 10px;
+}
+
+.omni-proxy-hero-metric {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+
+.omni-proxy-hero-metric-label {
+	font-size: 11px;
+	font-weight: 600;
+	color: var(--vscode-descriptionForeground);
+	text-transform: uppercase;
+}
+
+.omni-proxy-hero-metric-value {
+	font-size: 24px;
+	font-weight: 600;
+	color: var(--vscode-foreground);
+}
+
+.omni-proxy-status-span {
+	font-weight: 600;
+}
+
+/* Detailed Dashboard Layouts (OmniRoute style) */
+.omni-proxy-hero-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+	gap: 16px;
+	margin-top: 16px;
+}
+
+.omni-proxy-stat-card {
+	padding: 16px;
+	background-color: var(--vscode-editorWidget-background);
+	border-radius: 8px;
+	border: 1px solid var(--vscode-widget-border);
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.omni-proxy-stat-label {
+	font-size: 11px;
+	font-weight: 600;
+	text-transform: uppercase;
+	color: var(--vscode-descriptionForeground);
+	letter-spacing: 0.5px;
+}
+
+.omni-proxy-stat-value {
+	font-size: 28px;
+	font-weight: 600;
+	color: var(--vscode-foreground);
+}
+
+.omni-proxy-stat-value.primary {
+	color: var(--vscode-testing-iconPassed);
+}
+
+.omni-proxy-stat-value.secondary {
+	color: var(--vscode-textLink-activeForeground);
+}
+
+.omni-proxy-stat-value.tertiary {
+	color: var(--vscode-terminal-ansiMagenta);
+}
+
+.omni-proxy-stat-value.warning {
+	color: var(--vscode-testing-iconQueued);
+}
+
+.omni-proxy-stat-subtext {
+	font-size: 11px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.omni-proxy-detail-grid {
+	display: grid;
+	grid-template-columns: repeat(4, 1fr);
+	gap: 24px;
+	margin-top: 16px;
+	padding: 16px;
+	background-color: var(--vscode-editorWidget-background);
+	border-radius: 8px;
+	border: 1px solid var(--vscode-widget-border);
+}
+
+.omni-proxy-detail-item {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+
+.omni-proxy-detail-label {
+	font-size: 11px;
+	font-weight: 600;
+	text-transform: uppercase;
+	color: var(--vscode-descriptionForeground);
+}
+
+.omni-proxy-detail-value {
+	font-size: 18px;
+	font-weight: 600;
+	color: var(--vscode-foreground);
+}
+
+.omni-proxy-heatmap-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(12px, 1fr));
+	gap: 2px;
+	margin-top: 16px;
+}
+
+.omni-proxy-heatmap-cell {
+	width: 12px;
+	height: 12px;
+	border-radius: 2px;
+	background-color: var(--vscode-editorWidget-background);
+	border: 1px solid var(--vscode-widget-border);
+}
+
+.omni-proxy-heatmap-cell.active-1 { background-color: rgba(115, 201, 145, 0.2); }
+.omni-proxy-heatmap-cell.active-2 { background-color: rgba(115, 201, 145, 0.4); }
+.omni-proxy-heatmap-cell.active-3 { background-color: rgba(115, 201, 145, 0.7); }
+.omni-proxy-heatmap-cell.active-4 { background-color: rgba(115, 201, 145, 1); }
+
+.omni-proxy-table {
+	width: 100%;
+	border-collapse: collapse;
+	margin-top: 16px;
+	font-size: 13px;
+}
+
+.omni-proxy-table th {
+	text-align: left;
+	padding: 8px 16px;
+	font-size: 11px;
+	font-weight: 600;
+	text-transform: uppercase;
+	color: var(--vscode-descriptionForeground);
+	border-bottom: 1px solid var(--vscode-widget-border);
+}
+
+.omni-proxy-table td {
+	padding: 12px 16px;
+	border-bottom: 1px solid var(--vscode-widget-border);
+	color: var(--vscode-foreground);
+}
+
+.omni-proxy-table tr:last-child td {
+	border-bottom: none;
+}

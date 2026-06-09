@@ -1719,23 +1719,28 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
 		}
 
 		const workspace = configuration.workspace ?? toWorkspaceIdentifier(configuration.backupPath, false);
+		this.logService.trace('windowsManager#doOpenInBrowserWindow resolved workspace');
 
 		if (configuration.isSessionsWindow) {
+			this.logService.trace('windowsManager#doOpenInBrowserWindow resolving agents profile');
 			configuration.profiles.profile = this.userDataProfilesMainService.profiles.find(p => p.isAgentsWindowProfile) ?? await this.userDataProfilesMainService.createAgentsWindowProfile();
 		} else {
+			this.logService.trace('windowsManager#doOpenInBrowserWindow resolving profile');
 			const profilePromise = this.resolveProfileForBrowserWindow(options, workspace, defaultProfile);
 			const profile = profilePromise instanceof Promise ? await profilePromise : profilePromise;
 			configuration.profiles.profile = profile;
+			this.logService.trace('windowsManager#doOpenInBrowserWindow resolved profile');
 
 			if (!configuration.extensionDevelopmentPath) {
 				// Associate the configured profile to the workspace
 				// unless the window is for extension development,
 				// where we do not persist the associations
-				await this.userDataProfilesMainService.setProfileForWorkspace(workspace, profile);
+				this.userDataProfilesMainService.setProfileForWorkspace(workspace, profile).catch(error => this.logService.warn('Failed to associate user data profile to workspace', error));
 			}
 		}
 
 		// Load it
+		this.logService.trace('windowsManager#doOpenInBrowserWindow loading window');
 		window.load(configuration);
 	}
 

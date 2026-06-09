@@ -7,6 +7,7 @@ type ReadTimeoutOptions = {
 };
 
 export const DEFAULT_FETCH_TIMEOUT_MS = 600_000;
+export const MAX_TIMER_TIMEOUT_MS = 2_147_483_647;
 export const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 600_000;
 export const DEFAULT_STREAM_READINESS_TIMEOUT_MS = 30_000;
 export const DEFAULT_FETCH_CONNECT_TIMEOUT_MS = 30_000;

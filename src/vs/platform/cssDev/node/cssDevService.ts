@@ -48,17 +48,32 @@ export class CSSDevelopmentService implements ICSSDevelopmentService {
 		return await new Promise<string[]>((resolve) => {
 
 			const sw = StopWatch.create();
+			let settled = false;
+
+			const finish = (result: string[]) => {
+				if (settled) {
+					return;
+				}
+				settled = true;
+				clearTimeout(timeout);
+				resolve(result);
+			};
 
 			const chunks: Buffer[] = [];
 			const basePath = FileAccess.asFileUri('').fsPath;
-			const process = spawn(rg.rgPath, ['-g', '**/*.css', '--files', '--no-ignore', basePath], {});
+			const process = spawn(rg.rgPath, ['-g', '**/*.css', '-g', '!**/node_modules/**', '-g', '!**/.build/**', '-g', '!**/.git/**', '--files', '--no-ignore', basePath], {});
+			const timeout = setTimeout(() => {
+				this.logService.warn('[CSS_DEV] CSS module scan timed out; continuing without dev CSS modules');
+				process.kill();
+				finish([]);
+			}, 2000);
 
 			process.stdout.on('data', data => {
 				chunks.push(data);
 			});
 			process.on('error', err => {
 				this.logService.error('[CSS_DEV] FAILED to compute CSS data', err);
-				resolve([]);
+				finish([]);
 			});
 			process.on('close', () => {
 				const data = Buffer.concat(chunks).toString('utf8');
@@ -66,7 +81,7 @@ export class CSSDevelopmentService implements ICSSDevelopmentService {
 				if (result.some(path => path.indexOf('vs/') !== 0)) {
 					this.logService.error(`[CSS_DEV] Detected invalid paths in css modules, raw output: ${data}`);
 				}
-				resolve(result);
+				finish(result);
 				this.logService.info(`[CSS_DEV] DONE, ${result.length} css modules (${Math.round(sw.elapsed())}ms)`);
 			});
 		});

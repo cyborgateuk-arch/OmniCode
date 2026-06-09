@@ -46,6 +46,8 @@ export type BYOKModelConfig = BYOKGlobalKeyModelConfig | BYOKPerModelConfig | BY
 
 export interface BYOKModelCapabilities {
 	name: string;
+	detail?: string;
+	tooltip?: string;
 	url?: string;
 	maxInputTokens: number;
 	maxOutputTokens: number;
@@ -150,13 +152,14 @@ export function byokKnownModelToAPIInfo(providerName: string, id: string, capabi
 		version: '1.0.0',
 		maxOutputTokens: capabilities.maxOutputTokens,
 		maxInputTokens: capabilities.maxInputTokens,
-		// `detail` is intentionally omitted: when this model is resolved
+		// `detail` is omitted by default: when this model is resolved
 		// via a configured provider group, `LanguageModelsService` will
 		// fall back to the group name so multiple instances of the same
 		// vendor (e.g. multiple Ollama servers) are distinguishable in
 		// the model picker.
+		...(capabilities.detail ? { detail: capabilities.detail } : {}),
 		family: id,
-		tooltip: `${capabilities.name} is contributed via the ${providerName} provider.`,
+		tooltip: capabilities.tooltip ?? `${capabilities.name} is contributed via the ${providerName} provider.`,
 		multiplierNumeric: 0,
 		isUserSelectable: true,
 		capabilities: {

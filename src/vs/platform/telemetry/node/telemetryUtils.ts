@@ -5,11 +5,13 @@
 
 import { isMacintosh } from '../../../base/common/platform.js';
 import { stripUTF8BOM } from '../../../base/common/strings.js';
+import { raceTimeout } from '../../../base/common/async.js';
 import { getMachineId, getSqmMachineId, getDevDeviceId } from '../../../base/node/id.js';
 import { ILogService } from '../../log/common/log.js';
 import { IStateReadService } from '../../state/node/state.js';
 import { machineIdKey, sqmIdKey, devDeviceIdKey } from '../common/telemetry.js';
 
+const devDeviceIdTimeoutMs = 2000;
 
 export async function resolveMachineId(stateService: IStateReadService, logService: ILogService): Promise<string> {
 	// We cache the machineId for faster lookups
@@ -34,7 +36,14 @@ export async function resolveSqmId(stateService: IStateReadService, logService: 
 export async function resolveDevDeviceId(stateService: IStateReadService, logService: ILogService): Promise<string> {
 	let devDeviceId = stateService.getItem<string>(devDeviceIdKey);
 	if (typeof devDeviceId !== 'string') {
-		devDeviceId = await getDevDeviceId(logService.error.bind(logService));
+		devDeviceId = await raceTimeout(getDevDeviceId(logService.error.bind(logService)), devDeviceIdTimeoutMs);
+		if (typeof devDeviceId !== 'string') {
+			logService.warn(`Resolving devDevice identifier timed out after ${devDeviceIdTimeoutMs}ms. Falling back to machine identifier.`);
+			devDeviceId = stateService.getItem<string>(machineIdKey);
+			if (typeof devDeviceId !== 'string') {
+				devDeviceId = await getMachineId(logService.error.bind(logService));
+			}
+		}
 	}
 	return stripUTF8BOM(devDeviceId);
 }

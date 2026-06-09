@@ -102,6 +102,7 @@ function isEnvFlagEnabled(name: string): boolean {
 
 function isHealthCheckDisabled(): boolean {
   return (
+    isEnvFlagEnabled("OMNIROUTE_DISABLE_BACKGROUND_SERVICES") ||
     isEnvFlagEnabled("OMNIROUTE_DISABLE_TOKEN_HEALTHCHECK") ||
     isBuildProcess() ||
     isAutomatedTestProcess()

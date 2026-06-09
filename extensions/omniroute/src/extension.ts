@@ -111,6 +111,8 @@ interface ProxyAssignment {
 interface ModelDescriptor {
 	readonly id: string;
 	readonly name?: string;
+	readonly detail?: string;
+	readonly tooltip?: string;
 	readonly root?: string | null;
 	readonly parent?: string | null;
 	readonly owned_by?: string;
@@ -379,6 +381,70 @@ interface OmniProxyComboMetricItem {
 	readonly requests: number;
 	readonly successRate: number;
 	readonly avgLatencyMs: number;
+}
+
+interface OmniProxyComboModelStep extends JsonObject {
+	readonly kind: 'model';
+	readonly model: string;
+	readonly providerId?: string;
+	readonly connectionId?: string | null;
+	readonly weight: number;
+	readonly label?: string;
+}
+
+interface OmniProxyComboRefStep extends JsonObject {
+	readonly kind: 'combo-ref';
+	readonly comboName: string;
+	readonly weight: number;
+	readonly label?: string;
+}
+
+type OmniProxyComboStep = OmniProxyComboModelStep | OmniProxyComboRefStep;
+
+interface ComboBuilderModelOption {
+	readonly id: string;
+	readonly qualifiedModel: string;
+	readonly name: string;
+	readonly source?: string;
+	readonly contextLength?: number;
+	readonly outputTokenLimit?: number;
+	readonly supportsThinking?: boolean;
+}
+
+interface ComboBuilderConnectionOption {
+	readonly id: string;
+	readonly label: string;
+	readonly type: string;
+	readonly status: string;
+	readonly priority: number;
+	readonly isActive: boolean;
+	readonly defaultModel?: string | null;
+	readonly lastError?: string | null;
+}
+
+interface ComboBuilderProviderOption {
+	readonly providerId: string;
+	readonly displayName: string;
+	readonly alias: string;
+	readonly icon: string;
+	readonly color: string;
+	readonly acceptsArbitraryModel: boolean;
+	readonly connectionCount: number;
+	readonly activeConnectionCount: number;
+	readonly models: readonly ComboBuilderModelOption[];
+	readonly connections: readonly ComboBuilderConnectionOption[];
+}
+
+interface ComboBuilderComboRefOption {
+	readonly id: string;
+	readonly name: string;
+	readonly strategy: string;
+	readonly stepCount: number;
+}
+
+interface ComboBuilderOptionsPayload {
+	readonly providers?: readonly ComboBuilderProviderOption[];
+	readonly comboRefs?: readonly ComboBuilderComboRefOption[];
 }
 
 interface OmniProxyBatchItem {
@@ -2060,43 +2126,592 @@ class OmniRouteService implements vscode.Disposable, vscode.TreeDataProvider<Tre
 
 	private async createCombo(): Promise<void> {
 		await this.ensureProxyReady();
-		const name = await vscode.window.showInputBox({
-			title: vscode.l10n.t('Create Combo'),
-			prompt: vscode.l10n.t('Combo name'),
-			ignoreFocusOut: true
+		let options: ComboBuilderOptionsPayload = {};
+		try {
+			const response = await this.requestJson<ComboBuilderOptionsPayload>('/api/combos/builder/options', 'GET', undefined);
+			options = response.data;
+		} catch (error) {
+			this.outputChannel.appendLine(`[${OMNIPROXY_BRAND_NAME}] combo builder options failed: ${error instanceof Error ? error.message : String(error)}`);
+		}
+
+		const panel = vscode.window.createWebviewPanel(
+			'omniroute.comboBuilder',
+			vscode.l10n.t('Create OmniProxy Combo'),
+			vscode.ViewColumn.Active,
+			{
+				enableScripts: true,
+				retainContextWhenHidden: true
+			}
+		);
+		panel.webview.html = this.getComboBuilderHtml(panel.webview, options);
+		panel.webview.onDidReceiveMessage(async message => {
+			if (!message || typeof message !== 'object') {
+				return;
+			}
+			const command = typeof message.command === 'string' ? message.command : '';
+			if (command === 'cancel') {
+				panel.dispose();
+				return;
+			}
+			if (command === 'refresh') {
+				try {
+					const response = await this.requestJson<ComboBuilderOptionsPayload>('/api/combos/builder/options', 'GET', undefined);
+					await panel.webview.postMessage({ command: 'options', options: response.data });
+				} catch (error) {
+					await panel.webview.postMessage({ command: 'error', message: error instanceof Error ? error.message : String(error) });
+				}
+				return;
+			}
+			if (command !== 'create') {
+				return;
+			}
+
+			const payload = this.normalizeComboBuilderPayload(message);
+			if (!payload) {
+				await panel.webview.postMessage({ command: 'error', message: vscode.l10n.t('Enter a combo name and select at least one model or combo.') });
+				return;
+			}
+
+			try {
+				await this.requestJson('/api/combos', 'POST', payload);
+				await this.syncModels();
+				void vscode.window.showInformationMessage(vscode.l10n.t('Created OmniProxy combo "{0}".', payload.name));
+				panel.dispose();
+				await this.refresh();
+			} catch (error) {
+				await panel.webview.postMessage({ command: 'error', message: error instanceof Error ? error.message : String(error) });
+			}
 		});
-		if (!name?.trim()) {
-			return;
+	}
+
+	private normalizeComboBuilderPayload(message: { readonly [key: string]: unknown }): { name: string; strategy: string; models: OmniProxyComboStep[] } | undefined {
+		const name = typeof message.name === 'string' ? message.name.trim() : '';
+		const strategy = typeof message.strategy === 'string' && message.strategy.trim().length ? message.strategy.trim() : 'priority';
+		const targets = Array.isArray(message.targets) ? message.targets : [];
+		const models: OmniProxyComboStep[] = [];
+		for (const target of targets) {
+			if (!target || typeof target !== 'object' || Array.isArray(target)) {
+				continue;
+			}
+			const record = target as Record<string, unknown>;
+			if (record.kind === 'combo-ref') {
+				const comboName = typeof record.comboName === 'string' ? record.comboName.trim() : '';
+				if (!comboName) {
+					continue;
+				}
+				models.push({
+					kind: 'combo-ref',
+					comboName,
+					weight: this.readComboBuilderWeight(record.weight, strategy),
+					label: typeof record.label === 'string' && record.label.trim().length ? record.label.trim() : comboName
+				});
+				continue;
+			}
+
+			const model = typeof record.model === 'string' ? record.model.trim() : '';
+			if (!model) {
+				continue;
+			}
+			const providerId = typeof record.providerId === 'string' && record.providerId.trim().length ? record.providerId.trim() : this.parseProviderFromModelId(model);
+			const connectionId = typeof record.connectionId === 'string' && record.connectionId.trim().length ? record.connectionId.trim() : null;
+			models.push({
+				kind: 'model',
+				model,
+				...(providerId ? { providerId } : {}),
+				...(connectionId ? { connectionId } : {}),
+				weight: this.readComboBuilderWeight(record.weight, strategy),
+				label: typeof record.label === 'string' && record.label.trim().length ? record.label.trim() : model
+			});
 		}
-		const strategy = await vscode.window.showQuickPick([
-			{ label: 'priority' },
-			{ label: 'weighted' },
-			{ label: 'round-robin' },
-			{ label: 'context-relay' },
-			{ label: 'reset-aware' }
-		], { title: vscode.l10n.t('Routing strategy') });
-		if (!strategy) {
-			return;
+		if (!name || models.length === 0) {
+			return undefined;
 		}
+		return { name, strategy, models };
+	}
+
+	private readComboBuilderWeight(value: unknown, strategy: string): number {
+		if (typeof value === 'number' && Number.isFinite(value)) {
+			return Math.max(0, Math.min(100, value));
+		}
+		if (typeof value === 'string' && value.trim().length) {
+			const parsed = Number(value);
+			if (Number.isFinite(parsed)) {
+				return Math.max(0, Math.min(100, parsed));
+			}
+		}
+		return this.defaultComboStepWeight(strategy);
+	}
+
+	private getComboBuilderHtml(webview: vscode.Webview, options: ComboBuilderOptionsPayload): string {
+		const nonce = this.createWebviewNonce();
+		const initialOptions = JSON.stringify(options).replace(/</g, '\\u003c');
+		const cspSource = webview.cspSource;
+		return /* html */`<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${cspSource} data:; style-src 'unsafe-inline' ${cspSource}; script-src 'nonce-${nonce}';">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Create OmniProxy Combo</title>
+	<style>
+		:root {
+			color-scheme: light dark;
+			--border: var(--vscode-panel-border);
+			--surface: var(--vscode-sideBar-background);
+			--surface-2: var(--vscode-editorWidget-background);
+			--muted: var(--vscode-descriptionForeground);
+			--accent: var(--vscode-button-background);
+			--accent-fg: var(--vscode-button-foreground);
+		}
+		* { box-sizing: border-box; }
+		body {
+			margin: 0;
+			font-family: var(--vscode-font-family);
+			font-size: var(--vscode-font-size);
+			color: var(--vscode-foreground);
+			background: var(--vscode-editor-background);
+		}
+		.shell { min-height: 100vh; display: grid; grid-template-rows: auto 1fr auto; }
+		header, footer {
+			padding: 16px 20px;
+			border-bottom: 1px solid var(--border);
+			background: var(--surface);
+		}
+		footer { border-top: 1px solid var(--border); border-bottom: 0; display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+		h1 { margin: 0 0 4px; font-size: 20px; font-weight: 650; }
+		.subtle { color: var(--muted); }
+		.grid { display: grid; grid-template-columns: minmax(260px, 320px) 1fr minmax(260px, 340px); min-height: 0; }
+		.panel { min-height: 0; overflow: auto; padding: 16px; border-right: 1px solid var(--border); }
+		.panel:last-child { border-right: 0; border-left: 1px solid var(--border); }
+		label { display: block; color: var(--muted); font-size: 12px; margin: 0 0 6px; }
+		input, select {
+			width: 100%;
+			color: var(--vscode-input-foreground);
+			background: var(--vscode-input-background);
+			border: 1px solid var(--vscode-input-border, var(--border));
+			border-radius: 4px;
+			padding: 8px 10px;
+			outline-color: var(--vscode-focusBorder);
+		}
+		.field { margin-bottom: 14px; }
+		.toolbar { display: flex; gap: 8px; margin-bottom: 12px; }
+		button {
+			border: 1px solid var(--vscode-button-border, transparent);
+			border-radius: 4px;
+			padding: 7px 11px;
+			color: var(--accent-fg);
+			background: var(--accent);
+			cursor: pointer;
+			font: inherit;
+		}
+		button.secondary { color: var(--vscode-button-secondaryForeground); background: var(--vscode-button-secondaryBackground); }
+		button.ghost { color: var(--vscode-foreground); background: transparent; border-color: var(--border); }
+		button.icon { padding: 4px 7px; }
+		button:disabled { opacity: .55; cursor: default; }
+		.provider {
+			border: 1px solid var(--border);
+			border-radius: 6px;
+			background: var(--surface-2);
+			margin-bottom: 10px;
+			overflow: hidden;
+		}
+		.provider-head {
+			display: grid;
+			grid-template-columns: 12px 1fr auto;
+			gap: 10px;
+			align-items: center;
+			padding: 10px;
+			cursor: pointer;
+		}
+		.dot { width: 10px; height: 10px; border-radius: 50%; background: var(--provider-color, var(--accent)); }
+		.provider-title { font-weight: 600; overflow-wrap: anywhere; }
+		.badge {
+			display: inline-flex;
+			align-items: center;
+			gap: 4px;
+			border: 1px solid var(--border);
+			border-radius: 999px;
+			padding: 2px 7px;
+			color: var(--muted);
+			font-size: 11px;
+			white-space: nowrap;
+		}
+		.provider-body { padding: 0 10px 10px; display: none; }
+		.provider.open .provider-body { display: block; }
+		.account-row { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: end; margin-bottom: 10px; }
+		.model-list { display: grid; gap: 6px; max-height: 320px; overflow: auto; }
+		.model-row, .target-row, .combo-row {
+			border: 1px solid var(--border);
+			border-radius: 5px;
+			background: var(--vscode-editor-background);
+			padding: 8px;
+		}
+		.model-row { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; }
+		.model-name { font-weight: 600; overflow-wrap: anywhere; }
+		.model-id { color: var(--muted); font-size: 11px; overflow-wrap: anywhere; margin-top: 2px; }
+		.model-meta { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+		.target-row { margin-bottom: 8px; }
+		.target-head { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: start; }
+		.target-controls { display: grid; grid-template-columns: 1fr 90px auto; gap: 8px; margin-top: 8px; align-items: end; }
+		.empty {
+			border: 1px dashed var(--border);
+			border-radius: 6px;
+			padding: 18px;
+			color: var(--muted);
+			text-align: center;
+		}
+		.search { margin-bottom: 10px; }
+		.combo-row { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; margin-bottom: 8px; }
+		.status { color: var(--muted); min-height: 18px; }
+		.error { color: var(--vscode-errorForeground); }
+		@media (max-width: 920px) {
+			.grid { grid-template-columns: 1fr; }
+			.panel, .panel:last-child { border-right: 0; border-left: 0; border-bottom: 1px solid var(--border); }
+		}
+	</style>
+</head>
+<body>
+	<div class="shell">
+		<header>
+			<h1>OmniProxy Combo Builder</h1>
+			<div class="subtle">Select provider accounts and exact models for this combo.</div>
+		</header>
+		<main class="grid">
+			<section class="panel">
+				<div class="field">
+					<label for="comboName">Combo name</label>
+					<input id="comboName" placeholder="fast-coding-combo" autocomplete="off">
+				</div>
+				<div class="field">
+					<label for="strategy">Routing strategy</label>
+					<select id="strategy">
+						<option value="priority">priority - try targets in order</option>
+						<option value="weighted">weighted - split traffic by weight</option>
+						<option value="round-robin">round-robin - rotate targets</option>
+						<option value="context-relay">context-relay - preserve context on rotation</option>
+						<option value="fill-first">fill-first - drain quota first</option>
+						<option value="p2c">p2c - power of two choices</option>
+						<option value="random">random - pick randomly</option>
+						<option value="least-used">least-used - prefer lower usage</option>
+						<option value="cost-optimized">cost-optimized - prefer cheaper models</option>
+						<option value="reset-aware">reset-aware - prefer better quota windows</option>
+						<option value="strict-random">strict-random - random without priority bias</option>
+						<option value="auto">auto - OmniProxy decides</option>
+						<option value="lkgp">lkgp - last known good provider</option>
+						<option value="context-optimized">context-optimized - prefer context fit</option>
+					</select>
+				</div>
+				<div class="toolbar">
+					<button class="ghost" id="refreshBtn">Refresh</button>
+					<button class="ghost" id="clearBtn">Clear</button>
+				</div>
+				<div class="field">
+					<label for="search">Filter providers and models</label>
+					<input id="search" class="search" placeholder="provider, account, model..." autocomplete="off">
+				</div>
+				<div id="comboRefs"></div>
+			</section>
+			<section class="panel">
+				<div id="providers"></div>
+			</section>
+			<section class="panel">
+				<h1>Selected targets</h1>
+				<div class="subtle" id="targetCount">No targets selected</div>
+				<div id="targets" style="margin-top:12px"></div>
+			</section>
+		</main>
+		<footer>
+			<div class="status" id="status"></div>
+			<div class="toolbar" style="margin:0">
+				<button class="secondary" id="cancelBtn">Cancel</button>
+				<button id="createBtn">Create Combo</button>
+			</div>
+		</footer>
+	</div>
+	<script nonce="${nonce}">
+		const vscode = acquireVsCodeApi();
+		let options = ${initialOptions};
+		let selected = [];
+		let expanded = new Set();
+		let accountByProvider = new Map();
+		const $ = (id) => document.getElementById(id);
+		const esc = (value) => String(value ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+		const strategyWeight = () => $('strategy').value === 'weighted' ? 1 : 0;
+		const setStatus = (message, isError = false) => {
+			$('status').textContent = message || '';
+			$('status').className = isError ? 'status error' : 'status';
+		};
+		const accountOptions = (provider, selectedId) => {
+			const accounts = Array.isArray(provider.connections) ? provider.connections : [];
+			const rows = ['<option value="">Any active account</option>'];
+			for (const account of accounts) {
+				const suffix = account.isActive ? account.status : 'inactive';
+				rows.push('<option value="' + esc(account.id) + '"' + (account.id === selectedId ? ' selected' : '') + '>' + esc(account.label || account.id) + ' - ' + esc(suffix) + '</option>');
+			}
+			return rows.join('');
+		};
+		const selectedKey = (target) => [target.kind, target.providerId || '', target.model || '', target.comboName || '', target.connectionId || ''].join('|');
+		const addTarget = (target) => {
+			if (selected.some(item => selectedKey(item) === selectedKey(target))) {
+				setStatus('Target already selected.');
+				return;
+			}
+			selected.push({ weight: strategyWeight(), ...target });
+			renderTargets();
+			setStatus('');
+		};
+		const removeTarget = (index) => {
+			selected.splice(index, 1);
+			renderTargets();
+		};
+		const renderComboRefs = () => {
+			const combos = Array.isArray(options.comboRefs) ? options.comboRefs : [];
+			if (!combos.length) {
+				$('comboRefs').innerHTML = '';
+				return;
+			}
+			$('comboRefs').innerHTML = '<label>Existing combos</label>' + combos.map(combo => '<div class="combo-row"><div><div class="model-name">' + esc(combo.name) + '</div><div class="model-id">' + esc(combo.strategy) + ' - ' + esc(combo.stepCount) + ' targets</div></div><button class="ghost add-combo" data-name="' + esc(combo.name) + '">Add</button></div>').join('');
+		};
+		const renderProviders = () => {
+			const query = $('search').value.trim().toLowerCase();
+			const providers = Array.isArray(options.providers) ? options.providers : [];
+			const filtered = providers.filter(provider => {
+				if (!query) return true;
+				const haystack = [provider.displayName, provider.providerId, provider.alias, ...(provider.connections || []).map(a => a.label), ...(provider.models || []).map(m => m.name + ' ' + m.id)].join(' ').toLowerCase();
+				return haystack.includes(query);
+			});
+			if (!filtered.length) {
+				$('providers').innerHTML = '<div class="empty">No providers or models found. Connect an account or sync models first.</div>';
+				return;
+			}
+			$('providers').innerHTML = filtered.map((provider, index) => {
+				const open = expanded.has(provider.providerId) || index === 0;
+				if (index === 0) expanded.add(provider.providerId);
+				const selectedAccount = accountByProvider.get(provider.providerId) || '';
+				const models = Array.isArray(provider.models) ? provider.models : [];
+				return '<article class="provider ' + (open ? 'open' : '') + '" style="--provider-color:' + esc(provider.color || '') + '" data-provider="' + esc(provider.providerId) + '">'
+					+ '<div class="provider-head" data-toggle="' + esc(provider.providerId) + '"><span class="dot"></span><div><div class="provider-title">' + esc(provider.displayName || provider.providerId) + '</div><div class="model-id">' + esc(provider.providerId) + '</div></div><span class="badge">' + esc(provider.activeConnectionCount || 0) + '/' + esc(provider.connectionCount || 0) + ' accounts</span></div>'
+					+ '<div class="provider-body"><div class="account-row"><div><label>Account for added models</label><select class="account-select" data-provider="' + esc(provider.providerId) + '">' + accountOptions(provider, selectedAccount) + '</select></div><button class="ghost add-default" data-provider="' + esc(provider.providerId) + '">Add default</button></div>'
+					+ '<div class="model-list">' + (models.length ? models.slice(0, 80).map(model => '<div class="model-row"><div><div class="model-name">' + esc(model.name || model.id) + '</div><div class="model-id">' + esc(model.qualifiedModel || model.id) + '</div><div class="model-meta">' + (model.contextLength ? '<span class="badge">' + esc(model.contextLength) + ' ctx</span>' : '') + (model.supportsThinking ? '<span class="badge">thinking</span>' : '') + '<span class="badge">' + esc(model.source || 'model') + '</span></div></div><button class="ghost add-model" data-provider="' + esc(provider.providerId) + '" data-model="' + esc(model.qualifiedModel || (provider.providerId + '/' + model.id)) + '" data-label="' + esc(model.name || model.id) + '">Add</button></div>').join('') : '<div class="empty">No synced models for this provider.</div>') + '</div></div></article>';
+			}).join('');
+		};
+		const renderTargets = () => {
+			$('targetCount').textContent = selected.length ? selected.length + ' target' + (selected.length === 1 ? '' : 's') + ' selected' : 'No targets selected';
+			$('targets').innerHTML = selected.length ? selected.map((target, index) => {
+				const title = target.kind === 'combo-ref' ? 'Combo: ' + target.comboName : target.label || target.model;
+				const detail = target.kind === 'combo-ref' ? 'Existing combo route' : [target.providerId, target.connectionLabel || target.connectionId || 'any account', target.model].filter(Boolean).join(' - ');
+				return '<div class="target-row"><div class="target-head"><div><div class="model-name">' + esc(title) + '</div><div class="model-id">' + esc(detail) + '</div></div><button class="icon ghost remove-target" data-index="' + index + '">x</button></div><div class="target-controls"><div><label>Label</label><input class="target-label" data-index="' + index + '" value="' + esc(target.label || title) + '"></div><div><label>Weight</label><input class="target-weight" type="number" min="0" max="100" data-index="' + index + '" value="' + esc(target.weight ?? strategyWeight()) + '"></div><button class="ghost move-up" data-index="' + index + '">Up</button></div></div>';
+			}).join('') : '<div class="empty">Add models from the provider list. Pick an account first when this combo should use a specific account.</div>';
+		};
+		const render = () => {
+			renderComboRefs();
+			renderProviders();
+			renderTargets();
+		};
+		document.addEventListener('click', event => {
+			const toggle = event.target.closest('[data-toggle]');
+			if (toggle) {
+				const id = toggle.getAttribute('data-toggle');
+				expanded.has(id) ? expanded.delete(id) : expanded.add(id);
+				renderProviders();
+				return;
+			}
+			const modelButton = event.target.closest('.add-model');
+			if (modelButton) {
+				const providerId = modelButton.getAttribute('data-provider');
+				const model = modelButton.getAttribute('data-model');
+				const connectionId = accountByProvider.get(providerId) || '';
+				const provider = (options.providers || []).find(item => item.providerId === providerId);
+				const account = provider?.connections?.find(item => item.id === connectionId);
+				addTarget({ kind: 'model', providerId, model, connectionId: connectionId || null, connectionLabel: account?.label || '', label: modelButton.getAttribute('data-label') || model });
+				return;
+			}
+			const defaultButton = event.target.closest('.add-default');
+			if (defaultButton) {
+				const providerId = defaultButton.getAttribute('data-provider');
+				const provider = (options.providers || []).find(item => item.providerId === providerId);
+				const connectionId = accountByProvider.get(providerId) || '';
+				const account = provider?.connections?.find(item => item.id === connectionId);
+				const model = account?.defaultModel ? providerId + '/' + account.defaultModel : provider?.models?.[0]?.qualifiedModel;
+				if (model) addTarget({ kind: 'model', providerId, model, connectionId: connectionId || null, connectionLabel: account?.label || '', label: account?.defaultModel || model });
+				return;
+			}
+			const comboButton = event.target.closest('.add-combo');
+			if (comboButton) {
+				const comboName = comboButton.getAttribute('data-name');
+				addTarget({ kind: 'combo-ref', comboName, label: comboName });
+				return;
+			}
+			const removeButton = event.target.closest('.remove-target');
+			if (removeButton) {
+				removeTarget(Number(removeButton.getAttribute('data-index')));
+				return;
+			}
+			const moveButton = event.target.closest('.move-up');
+			if (moveButton) {
+				const index = Number(moveButton.getAttribute('data-index'));
+				if (index > 0) {
+					const item = selected.splice(index, 1)[0];
+					selected.splice(index - 1, 0, item);
+					renderTargets();
+				}
+			}
+		});
+		document.addEventListener('change', event => {
+			if (event.target.matches('.account-select')) {
+				accountByProvider.set(event.target.getAttribute('data-provider'), event.target.value);
+			}
+			if (event.target.matches('.target-weight')) {
+				const index = Number(event.target.getAttribute('data-index'));
+				selected[index].weight = Number(event.target.value) || 0;
+			}
+			if (event.target.matches('.target-label')) {
+				const index = Number(event.target.getAttribute('data-index'));
+				selected[index].label = event.target.value;
+			}
+		});
+		$('search').addEventListener('input', renderProviders);
+		$('strategy').addEventListener('change', () => {
+			selected = selected.map(target => ({ ...target, weight: strategyWeight() }));
+			renderTargets();
+		});
+		$('refreshBtn').addEventListener('click', () => { setStatus('Refreshing options...'); vscode.postMessage({ command: 'refresh' }); });
+		$('clearBtn').addEventListener('click', () => { selected = []; renderTargets(); });
+		$('cancelBtn').addEventListener('click', () => vscode.postMessage({ command: 'cancel' }));
+		$('createBtn').addEventListener('click', () => {
+			setStatus('Creating combo...');
+			vscode.postMessage({ command: 'create', name: $('comboName').value, strategy: $('strategy').value, targets: selected });
+		});
+		window.addEventListener('message', event => {
+			const data = event.data || {};
+			if (data.command === 'options') {
+				options = data.options || {};
+				render();
+				setStatus('Options refreshed.');
+			}
+			if (data.command === 'error') {
+				setStatus(data.message || 'Unable to complete action.', true);
+			}
+		});
+		render();
+	</script>
+</body>
+</html>`;
+	}
+
+	private createWebviewNonce(): string {
+		const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+		let nonce = '';
+		for (let i = 0; i < 32; i++) {
+			nonce += chars.charAt(Math.floor(Math.random() * chars.length));
+		}
+		return nonce;
+	}
+
+	async pickComboSteps(comboName: string, strategy: string): Promise<OmniProxyComboStep[]> {
+		type ComboTargetPick = vscode.QuickPickItem & {
+			readonly target:
+				| { readonly kind: 'model'; readonly model: ModelDescriptor }
+				| { readonly kind: 'combo-ref'; readonly combo: OmniProxyComboItem };
+		};
+
+		let models: readonly ModelDescriptor[] = [];
+		let combos: readonly OmniProxyComboItem[] = [];
+		try {
+			const [connections, comboResponse] = await Promise.all([
+				this.fetchConnections(),
+				this.requestJson<{ readonly combos?: readonly OmniProxyComboItem[] }>('/api/combos', 'GET', undefined)
+			]);
+			[models, combos] = await Promise.all([
+				this.fetchSelectableModels(connections),
+				Promise.resolve((comboResponse.data.combos ?? []).filter(combo => combo.name !== comboName))
+			]);
+		} catch (error) {
+			this.outputChannel.appendLine(`[${OMNIPROXY_BRAND_NAME}] combo target catalog failed: ${error instanceof Error ? error.message : String(error)}`);
+		}
+
+		const picks: ComboTargetPick[] = [
+			...models.map(model => {
+				const providerId = this.parseProviderFromModelId(model.id) ?? model.owned_by;
+				return {
+					label: model.name && model.name !== model.id ? model.name : model.id,
+					description: providerId ? `$(server) ${providerId}` : undefined,
+					detail: model.id,
+					target: { kind: 'model' as const, model }
+				};
+			}),
+			...combos.map(combo => ({
+				label: combo.name,
+				description: '$(layers) Combo',
+				detail: combo.strategy ? vscode.l10n.t('Strategy: {0}', combo.strategy) : undefined,
+				target: { kind: 'combo-ref' as const, combo }
+			}))
+		];
+
+		if (picks.length > 0) {
+			const selected = await vscode.window.showQuickPick(picks, {
+				title: vscode.l10n.t('Select combo targets'),
+				placeHolder: vscode.l10n.t('Choose one or more models or existing combos'),
+				canPickMany: true,
+				matchOnDescription: true,
+				matchOnDetail: true
+			});
+			if (selected?.length) {
+				return selected.map(item => this.toComboStep(item.target, strategy));
+			}
+			return [];
+		}
+
 		const modelsInput = await vscode.window.showInputBox({
 			title: vscode.l10n.t('Create Combo'),
 			prompt: vscode.l10n.t('Comma-separated model ids'),
 			placeHolder: 'gemini-cli/gemini-3.1-pro-preview, antigravity/model',
 			ignoreFocusOut: true
 		});
-		const models = (modelsInput ?? '')
+		return (modelsInput ?? '')
 			.split(',')
 			.map(value => value.trim())
 			.filter(Boolean)
-			.map((modelId, index) => ({ model: modelId, priority: index + 1, weight: 1 }));
-		if (!models.length) {
-			return;
+			.map(modelId => ({
+				kind: 'model' as const,
+				model: modelId,
+				providerId: this.parseProviderFromModelId(modelId) ?? undefined,
+				weight: this.defaultComboStepWeight(strategy),
+				label: modelId
+			}));
+	}
+
+	private toComboStep(target: { readonly kind: 'model'; readonly model: ModelDescriptor } | { readonly kind: 'combo-ref'; readonly combo: OmniProxyComboItem }, strategy: string): OmniProxyComboStep {
+		const weight = this.defaultComboStepWeight(strategy);
+		if (target.kind === 'combo-ref') {
+			return {
+				kind: 'combo-ref',
+				comboName: target.combo.name,
+				weight,
+				label: target.combo.name
+			};
 		}
-		await this.requestJson('/api/combos', 'POST', {
-			name: name.trim(),
-			strategy: strategy.label,
-			models
-		});
+
+		const providerId = this.parseProviderFromModelId(target.model.id) ?? target.model.owned_by;
+		return {
+			kind: 'model',
+			model: target.model.id,
+			...(providerId ? { providerId } : {}),
+			weight,
+			label: target.model.name || target.model.id
+		};
+	}
+
+	private defaultComboStepWeight(strategy: string): number {
+		return strategy === 'weighted' ? 1 : 0;
+	}
+
+	private parseProviderFromModelId(modelId: string): string | undefined {
+		const slashIndex = modelId.indexOf('/');
+		if (slashIndex <= 0) {
+			return undefined;
+		}
+		return modelId.slice(0, slashIndex);
 	}
 
 	private async deleteCombo(id: string | undefined): Promise<void> {
@@ -2431,6 +3046,8 @@ class OmniRouteService implements vscode.Disposable, vscode.TreeDataProvider<Tre
 			apiType: 'chat-completions',
 			toolCalling: true,
 			vision: model.capabilities?.vision === true || model.input_modalities?.includes('image') === true,
+			...(model.detail ? { detail: model.detail } : {}),
+			...(model.tooltip ? { tooltip: model.tooltip } : {}),
 			maxInputTokens: model.context_length ?? 128000,
 			maxOutputTokens: model.max_output_tokens ?? 16000
 		}));
@@ -2759,6 +3376,8 @@ class OmniRouteService implements vscode.Disposable, vscode.TreeDataProvider<Tre
 			path.join(this.repoRoot, 'OmniRoute-main', '.env'),
 			homeDir ? path.join(homeDir, '.omniroute', 'server.env') : undefined,
 			homeDir ? path.join(homeDir, '.omniroute', '.env') : undefined,
+			homeDir ? path.join(homeDir, '.omniproxy', 'server.env') : undefined,
+			homeDir ? path.join(homeDir, '.omniproxy', '.env') : undefined,
 		].filter((candidate): candidate is string => typeof candidate === 'string');
 	}
 
@@ -3116,7 +3735,7 @@ class OmniRouteService implements vscode.Disposable, vscode.TreeDataProvider<Tre
 			return false;
 		}
 		if (this.childProcess) {
-			return this.waitForServer();
+			return options.silent ? false : this.waitForServer();
 		}
 
 		await this.recoverStaleNextDevServer();
@@ -3136,6 +3755,9 @@ class OmniRouteService implements vscode.Disposable, vscode.TreeDataProvider<Tre
 			PORT: this.getBaseUrl().port,
 			BASE_URL: this.getBaseUrl().toString(),
 			NEXT_PUBLIC_BASE_URL: this.getBaseUrl().toString(),
+			NEXT_TELEMETRY_DISABLED: '1',
+			OMNIROUTE_DISABLE_BACKGROUND_SERVICES: 'true',
+			PRICING_SYNC_ENABLED: 'false',
 		};
 
 		this.outputChannel.appendLine(`[${OMNIPROXY_BRAND_NAME}] starting local server`);
@@ -3159,7 +3781,7 @@ class OmniRouteService implements vscode.Disposable, vscode.TreeDataProvider<Tre
 			this.treeEmitter.fire(undefined);
 		});
 
-		return this.waitForServer();
+		return options.silent ? false : this.waitForServer();
 	}
 
 	private async ensureRuntimeOAuthDefaults(): Promise<void> {
@@ -3170,7 +3792,7 @@ class OmniRouteService implements vscode.Disposable, vscode.TreeDataProvider<Tre
 	}
 
 	private async waitForServer(): Promise<boolean> {
-		for (let attempt = 0; attempt < 60; attempt++) {
+		for (let attempt = 0; attempt < 20; attempt++) {
 			if (await this.isServerReachable()) {
 				return true;
 			}
@@ -3208,6 +3830,8 @@ class OmniRouteService implements vscode.Disposable, vscode.TreeDataProvider<Tre
 				env: {
 					...process.env,
 					...this.resolveRuntimeSecretOverrides(),
+					OMNIROUTE_DISABLE_BACKGROUND_SERVICES: 'true',
+					PRICING_SYNC_ENABLED: 'false',
 					PATH: `${path.dirname(this.getNodePath())}${path.delimiter}${process.env.PATH ?? ''}`
 				},
 				stdio: 'pipe'
@@ -3238,7 +3862,7 @@ class OmniRouteService implements vscode.Disposable, vscode.TreeDataProvider<Tre
 
 	private async isServerReachable(): Promise<boolean> {
 		try {
-			await this.requestJson('/api/auth/status', 'GET', undefined, undefined, false);
+			await this.requestJson('/api/auth/status', 'GET', undefined, undefined, false, 1500);
 			return true;
 		} catch {
 			return false;

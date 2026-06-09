@@ -313,6 +313,32 @@ export async function getUnifiedModelsResponse(
     const models = [];
     const timestamp = Math.floor(Date.now() / 1000);
 
+    const describeComboStep = (step: any) => {
+      if (!step || typeof step !== "object") return null;
+      if (step.kind === "combo-ref") {
+        const comboName = typeof step.comboName === "string" ? step.comboName.trim() : "";
+        return comboName ? `combo/${comboName}` : null;
+      }
+      const model = typeof step.model === "string" ? step.model.trim() : "";
+      if (!model) return null;
+      const providerId = typeof step.providerId === "string" ? step.providerId.trim() : "";
+      if (model.includes("/") || !providerId) return model;
+      return `${providerId}/${model}`;
+    };
+
+    const summarizeComboTargets = (combo: any) => {
+      const targets = Array.isArray(combo.models)
+        ? combo.models.map(describeComboStep).filter((value): value is string => !!value)
+        : [];
+      const visible = targets.slice(0, 6);
+      const suffix = targets.length > visible.length ? `, +${targets.length - visible.length} more` : "";
+      return {
+        count: targets.length,
+        targets,
+        summary: visible.length > 0 ? `${visible.join(", ")}${suffix}` : "No targets configured",
+      };
+    };
+
     // Add combos first (they appear at the top) — only active ones
     for (const combo of combos) {
       if (combo.isActive === false || combo.isHidden === true) continue;
@@ -339,6 +365,7 @@ export async function getUnifiedModelsResponse(
           : comboContextLength !== undefined && comboContextLength !== Infinity
             ? comboContextLength
             : undefined;
+      const targetSummary = summarizeComboTargets(combo);
 
       models.push({
         id: combo.name,
@@ -348,6 +375,12 @@ export async function getUnifiedModelsResponse(
         permission: [],
         root: combo.name,
         parent: null,
+        display_name: `Combo: ${combo.name}`,
+        name: `Combo: ${combo.name}`,
+        detail: `Combo (${combo.strategy || "priority"}) - ${targetSummary.count} target${targetSummary.count === 1 ? "" : "s"}`,
+        tooltip: `OmniProxy combo "${combo.name}" routes through: ${targetSummary.summary}`,
+        combo_targets: targetSummary.targets,
+        combo_strategy: combo.strategy || "priority",
         ...(effectiveContextLength !== undefined ? { context_length: effectiveContextLength } : {}),
       });
     }
