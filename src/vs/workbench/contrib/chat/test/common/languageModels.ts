@@ -109,11 +109,15 @@ export class NullLanguageModelsService implements ILanguageModelsService {
 
 	addToRecentlyUsedList(): void { }
 	clearRecentlyUsedList(): void { }
+	removeFromRecentlyUsedList(_modelIdentifier: string): void { }
 
 	getPinnedModelIds(): string[] { return []; }
 	pinModel(_modelIdentifier: string): void { }
 	unpinModel(_modelIdentifier: string): void { }
 	isModelPinned(_modelIdentifier: string): boolean { return false; }
+
+	getHiddenModelIds(): string[] { return []; }
+	hideModel(_modelIdentifier: string): void { }
 
 	getModelsControlManifest(): IModelsControlManifest {
 		return { free: {}, paid: {} };

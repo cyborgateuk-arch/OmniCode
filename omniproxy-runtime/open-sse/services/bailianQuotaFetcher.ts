@@ -32,7 +32,7 @@ const BAILIAN_QUOTA_PATH =
   "/data/api.json?action=zeldaEasy.broadscope-bailian.codingPlan.queryCodingPlanInstanceInfoV2&product=broadscope-bailian&api=queryCodingPlanInstanceInfoV2";
 
 // Cache TTL — short enough to be reactive, long enough to avoid rate limits
-const CACHE_TTL_MS = 60_000; // 60 seconds
+const CACHE_TTL_MS = parseInt(process.env.BAILIAN_QUOTA_CACHE_TTL_MS || '60000', 10); // 60 seconds
 
 // Triple-window quota info (richer than QuotaInfo — includes all 3 windows)
 // [Oracle CONDITIONAL] bailian-coding-plan only — do not reuse for other providers

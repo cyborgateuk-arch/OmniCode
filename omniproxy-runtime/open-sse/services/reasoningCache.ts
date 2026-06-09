@@ -79,7 +79,7 @@ type ToolCallLike = {
 
 const memoryCache = new Map<string, MemoryCacheEntry>();
 const MAX_MEMORY_ENTRIES = 2000;
-const TTL_MS = 2 * 60 * 60 * 1000; // 2 hours
+const TTL_MS = parseInt(process.env.REASONING_CACHE_TTL_MS || String(2 * 60 * 60 * 1000), 10); // 2 hours
 
 // ──────────────── Counters ────────────────
 

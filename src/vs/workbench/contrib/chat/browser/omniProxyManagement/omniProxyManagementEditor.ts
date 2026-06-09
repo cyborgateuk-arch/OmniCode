@@ -365,6 +365,7 @@ export class OmniProxyManagementEditor extends EditorPane {
 	private isLoading = false;
 	private providerSearchValue = '';
 	private configuredOnly = false;
+	private refreshInterval: any;
 
 	constructor(
 		group: IEditorGroup,
@@ -390,6 +391,13 @@ export class OmniProxyManagementEditor extends EditorPane {
 		this.inOmniProxyEditorContextKey.set(true);
 		await super.setInput(input, options, context, token);
 		await this.refreshDashboard();
+
+		this.refreshInterval = setInterval(() => {
+			if (!this.isLoading && this.isVisible()) {
+				void this.refreshDashboard(true);
+			}
+		}, 5000);
+
 		if (this.dimension) {
 			this.layout(this.dimension);
 		}
@@ -406,24 +414,58 @@ export class OmniProxyManagementEditor extends EditorPane {
 
 	override clearInput(): void {
 		this.inOmniProxyEditorContextKey.set(false);
+		if (this.refreshInterval) {
+			clearInterval(this.refreshInterval);
+			this.refreshInterval = undefined;
+		}
 		super.clearInput();
 	}
 
-	async refreshDashboard(): Promise<void> {
-		this.isLoading = true;
-		this.errorMessage = undefined;
-		this.render();
+	override dispose(): void {
+		if (this.refreshInterval) {
+			clearInterval(this.refreshInterval);
+			this.refreshInterval = undefined;
+		}
+		super.dispose();
+	}
+
+	async refreshDashboard(silent = false): Promise<void> {
+		if (silent && this.contentContainer?.contains(document.activeElement)) {
+			// Do not disrupt the user if they are interacting with the UI
+			return;
+		}
+
+		if (!silent) {
+			this.isLoading = true;
+			this.errorMessage = undefined;
+			this.render();
+		}
+
+		let newData: OmniProxyDashboardData | undefined;
+		let newError: string | undefined;
+
 		try {
-			this.dashboardData = await Promise.race([
+			newData = await Promise.race([
 				this.commandService.executeCommand<OmniProxyDashboardData>('omniroute.getDashboardData', this.selectedSection),
 				new Promise<OmniProxyDashboardData>((_, reject) => setTimeout(() => reject(new Error(localize('omniProxy.loading.timeout', 'Timed out while loading OmniProxy dashboard data.'))), 15000))
 			]);
 		} catch (error) {
-			this.dashboardData = undefined;
-			this.errorMessage = getErrorMessage(error);
-		} finally {
-			this.isLoading = false;
-			this.render();
+			newError = getErrorMessage(error);
+		}
+
+		if (silent && this.contentContainer?.contains(document.activeElement)) {
+			// Check again after fetching, in case the user started interacting
+			return;
+		}
+
+		this.dashboardData = newData;
+		this.errorMessage = newError;
+		this.isLoading = false;
+
+		const scrollTop = this.contentContainer?.scrollTop;
+		this.render();
+		if (this.contentContainer && scrollTop !== undefined) {
+			this.contentContainer.scrollTop = scrollTop;
 		}
 	}
 
@@ -549,87 +591,282 @@ export class OmniProxyManagementEditor extends EditorPane {
 
 	private renderHomeSection(data: OmniProxyDashboardData): void {
 		this.renderHeader(localize('omniProxy.home.title', 'OmniProxy Dashboard'), localize('omniProxy.home.description', 'OmniProxy acts as a local proxy between OmniCode and AI providers, handling API keys, usage tracking, and multi-model routing.'));
-		
-		const topCards = DOM.append(this.contentContainer!, $('.omni-proxy-card-grid.metrics'));
-		
-		const activeProvidersCount = data.providers.filter(p => p.connectionCount > 0).length;
-		this.appendMetricCard(topCards, localize('omniProxy.home.providers', 'Providers'), String(activeProvidersCount), localize('omniProxy.home.providersDesc', '{0} configured', data.providers.length));
-		
-		const combosCount = data.sections.combos.items.length;
-		this.appendMetricCard(topCards, localize('omniProxy.home.combos', 'Model Combos'), String(combosCount), localize('omniProxy.home.combosDesc', '{0} models grouped', data.sections.combos.items.reduce((acc, c) => acc + (Array.isArray(c.models) ? c.models.length : 0), 0)));
-		
-		const batchCount = data.sections.batchTesting.batches.length;
-		this.appendMetricCard(topCards, localize('omniProxy.home.batchTests', 'Batch Tests'), String(batchCount), localize('omniProxy.home.batchDesc', '{0} active runs', data.sections.batchTesting.batches.filter(b => b.status === 'running').length));
-		
-		const statusCard = this.appendCard(this.contentContainer!, localize('omniProxy.home.status', 'System Status'), localize('omniProxy.home.statusDesc', 'Local proxy health and diagnostics.'));
-		this.appendDetail(statusCard, localize('omniProxy.home.version', 'Version'), '1.0.0');
-		this.appendDetail(statusCard, localize('omniProxy.home.port', 'Server Port'), '9222');
-		this.appendDetail(statusCard, localize('omniProxy.home.uptime', 'Uptime'), this.formatDuration(performance.now()));
-		
-		const actionsRow = DOM.append(statusCard, $('.omni-proxy-actions-row'));
-		actionsRow.style.marginTop = '16px';
-		actionsRow.style.display = 'flex';
-		actionsRow.style.gap = '8px';
-		this.appendCommandButton(actionsRow, localize('omniProxy.home.logs', 'View Logs'), Codicon.output, 'omniroute.showLogs');
-		this.appendCommandButton(actionsRow, localize('omniProxy.home.restart', 'Restart Server'), Codicon.debugRestart, 'omniroute.restartServer', undefined, true);
 
-		const combosList = this.appendCard(this.contentContainer!, localize('omniProxy.home.combosCard', 'Created Combos & Usage'), localize('omniProxy.home.combosDescription', 'Live usage metrics and routing strategies for your configured combos.'));
-		
-		if (!data.sections.combos.items.length) {
-			this.appendEmptyNote(combosList, localize('omniProxy.combos.noCombos', 'No combos configured yet.'));
+		const summary = data.sections.costs.summary;
+		const totalCost = summary?.totalCost ?? data.usage?.totalCost ?? 0;
+		const totalRequests = summary?.totalRequests ?? data.usage?.totalRequests ?? 0;
+		const totalTokens = summary?.totalTokens ?? ((data.usage?.totalPromptTokens ?? 0) + (data.usage?.totalCompletionTokens ?? 0));
+		const uniqueAccounts = summary?.uniqueAccounts ?? data.sections.providers.connections.length;
+		const uniqueModels = summary?.uniqueModels ?? data.stats.modelCount;
+		const fallbackRate = summary?.fallbackRatePct ?? 0;
+		const successRate = totalRequests > 0 ? Math.max(0, 100 - fallbackRate) : 100;
+		const activeProviders = data.providers.filter(p => p.connectionCount > 0).length;
+
+		// ── Top metrics strip ──────────────────────────────────────────
+		const metricsStrip = DOM.append(this.contentContainer!, $('.omni-proxy-home-metrics'));
+		const metrics: Array<{ label: string; value: string; sub: string; cls?: string }> = [
+			{ label: localize('omniProxy.home.totalRequests', 'Total Requests'), value: this.formatNumber(totalRequests), sub: '30d', cls: 'secondary' },
+			{ label: localize('omniProxy.home.totalCost', 'Total Cost'), value: this.formatCurrency(totalCost), sub: '30d', cls: 'warning' },
+			{ label: localize('omniProxy.home.successRate', 'Success Rate'), value: `${successRate.toFixed(1)}%`, sub: 'last 30d', cls: 'primary' },
+			{ label: localize('omniProxy.home.totalTokens', 'Tokens Used'), value: this.formatNumber(totalTokens), sub: 'prompt + completion' },
+			{ label: localize('omniProxy.home.accountsLinked', 'Accounts Linked'), value: String(uniqueAccounts), sub: `${activeProviders} providers`, cls: 'tertiary' },
+			{ label: localize('omniProxy.home.modelsAvail', 'Models Available'), value: String(uniqueModels), sub: 'synced from OmniProxy' },
+		];
+		for (const m of metrics) {
+			const card = DOM.append(metricsStrip, $('.omni-proxy-stat-card'));
+			card.style.flex = '1';
+			card.style.minWidth = '0';
+			DOM.append(card, $('.omni-proxy-stat-label', {}, m.label));
+			const valEl = DOM.append(card, $('.omni-proxy-stat-value', {}, m.value));
+			valEl.style.fontSize = '22px';
+			if (m.cls) valEl.classList.add(m.cls);
+			DOM.append(card, $('.omni-proxy-stat-subtext', {}, m.sub));
+		}
+
+		// ── Two-column layout ──────────────────────────────────────────
+		const twoCol = DOM.append(this.contentContainer!, $('div.omni-proxy-home-two-col'));
+
+		// LEFT COLUMN
+		const leftCol = DOM.append(twoCol, $('div.omni-proxy-home-col'));
+
+		// Accounts Linked card
+		const accountsCard = this.appendCard(leftCol, localize('omniProxy.home.accountsCard', 'Accounts Linked'), localize('omniProxy.home.accountsCardDesc', 'Connected provider accounts and their health status.'));
+
+		if (!data.sections.providers.connections.length) {
+			this.appendEmptyNote(accountsCard, localize('omniProxy.home.noAccounts', 'No provider accounts connected yet. Go to Providers to add one.'));
 		} else {
+			const connTable = DOM.append(accountsCard, $('div'));
+			connTable.style.display = 'flex';
+			connTable.style.flexDirection = 'column';
+			connTable.style.gap = '6px';
+			connTable.style.marginTop = '8px';
+
+			for (const conn of data.sections.providers.connections.slice(0, 12)) {
+				const row = DOM.append(connTable, $('div'));
+				row.style.display = 'flex';
+				row.style.alignItems = 'center';
+				row.style.gap = '8px';
+				row.style.padding = '7px 10px';
+				row.style.borderRadius = '5px';
+				row.style.background = 'color-mix(in srgb, var(--vscode-foreground) 4%, transparent)';
+
+				// Status dot
+				const dot = DOM.append(row, $('span'));
+				dot.style.width = '8px';
+				dot.style.height = '8px';
+				dot.style.borderRadius = '50%';
+				dot.style.flexShrink = '0';
+				const statusOk = conn.testStatus === 'active' || conn.testStatus === 'success';
+				dot.style.background = statusOk
+					? 'var(--vscode-testing-iconPassed)'
+					: conn.testStatus === 'error' || conn.testStatus === 'expired'
+						? 'var(--vscode-testing-iconFailed)'
+						: 'var(--vscode-testing-iconQueued)';
+
+				const nameCol = DOM.append(row, $('div'));
+				nameCol.style.flex = '1';
+				nameCol.style.minWidth = '0';
+
+				const accName = conn.displayName || conn.name || conn.email || conn.provider;
+				DOM.append(nameCol, $('div', { style: 'font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;' }, accName));
+				DOM.append(nameCol, $('div', { style: 'font-size: 10px; color: var(--vscode-descriptionForeground);' }, `${conn.provider} · ${conn.authType ?? 'unknown'}`));
+
+				const badges = DOM.append(row, $('div'));
+				badges.style.display = 'flex';
+				badges.style.gap = '4px';
+				badges.style.flexShrink = '0';
+
+				const statusBadge = DOM.append(badges, $('span.omni-proxy-pill'));
+				statusBadge.textContent = conn.isActive === false ? 'Inactive' : (conn.testStatus ?? 'unknown');
+				if (statusOk) statusBadge.style.color = 'var(--vscode-testing-iconPassed)';
+				else if (conn.isActive === false) statusBadge.style.opacity = '0.6';
+
+				if (conn.rateLimitProtection) {
+					const rlp = DOM.append(badges, $('span.omni-proxy-pill'));
+					rlp.textContent = 'Rate Protect';
+					rlp.style.color = 'var(--vscode-textLink-activeForeground)';
+				}
+			}
+
+			if (data.sections.providers.connections.length > 12) {
+				DOM.append(connTable, $('div', { style: 'font-size: 11px; color: var(--vscode-descriptionForeground); padding: 4px 10px;' },
+					localize('omniProxy.home.moreAccounts', '+ {0} more accounts', data.sections.providers.connections.length - 12)));
+			}
+		}
+
+		// Cost by Provider chart (SVG bar chart)
+		if (data.sections.costs.byProvider.length > 0) {
+			const chartCard = this.appendCard(leftCol, localize('omniProxy.home.costByProvider', 'Cost by Provider'), localize('omniProxy.home.costByProviderDesc', 'Spending distribution across provider accounts.'));
+			this.renderBarChart(chartCard, data.sections.costs.byProvider.slice(0, 8), 'cost');
+		}
+
+		// RIGHT COLUMN
+		const rightCol = DOM.append(twoCol, $('div.omni-proxy-home-col'));
+
+		// Provider Health grid
+		const healthCard = this.appendCard(rightCol, localize('omniProxy.home.providerHealth', 'Provider Health'), localize('omniProxy.home.providerHealthDesc', 'Request success rate and average latency per provider.'));
+
+		if (!data.sections.providers.metrics.length) {
+			this.appendEmptyNote(healthCard, localize('omniProxy.home.noHealthData', 'No request data yet. Send a request through OmniProxy to see metrics.'));
+		} else {
+			const healthGrid = DOM.append(healthCard, $('div'));
+			healthGrid.style.display = 'flex';
+			healthGrid.style.flexDirection = 'column';
+			healthGrid.style.gap = '10px';
+			healthGrid.style.marginTop = '8px';
+
+			for (const metric of data.sections.providers.metrics.slice(0, 10)) {
+				const item = DOM.append(healthGrid, $('div'));
+				item.style.display = 'flex';
+				item.style.flexDirection = 'column';
+				item.style.gap = '3px';
+
+				const labelRow = DOM.append(item, $('div'));
+				labelRow.style.display = 'flex';
+				labelRow.style.justifyContent = 'space-between';
+				labelRow.style.fontSize = '12px';
+				DOM.append(labelRow, $('span', { style: 'font-weight: 600;' }, metric.provider));
+				DOM.append(labelRow, $('span', { style: 'color: var(--vscode-descriptionForeground);' }, `${metric.successRate}% · ${metric.avgLatencyMs}ms`));
+
+				const barBg = DOM.append(item, $('div'));
+				barBg.style.height = '5px';
+				barBg.style.borderRadius = '3px';
+				barBg.style.background = 'var(--vscode-scrollbarSlider-background)';
+				barBg.style.overflow = 'hidden';
+
+				const barFill = DOM.append(barBg, $('div'));
+				barFill.style.height = '100%';
+				barFill.style.width = `${metric.successRate}%`;
+				barFill.style.borderRadius = '3px';
+				barFill.style.background = metric.successRate > 90
+					? 'var(--vscode-testing-iconPassed)'
+					: metric.successRate > 70
+						? 'var(--vscode-testing-iconQueued)'
+						: 'var(--vscode-testing-iconFailed)';
+				barFill.style.transition = 'width 0.4s ease';
+			}
+		}
+
+		// Requests by model chart
+		if (data.sections.costs.byModel.length > 0) {
+			const modelCard = this.appendCard(rightCol, localize('omniProxy.home.requestsByModel', 'Requests by Model'), localize('omniProxy.home.requestsByModelDesc', 'Top models by request volume.'));
+			this.renderBarChart(modelCard, data.sections.costs.byModel.slice(0, 6), 'requests');
+		}
+
+		// ── System status & quick actions ─────────────────────────────
+		const statusRow = DOM.append(this.contentContainer!, $('div.omni-proxy-home-status-row'));
+
+		const statusCard = this.appendCard(statusRow, localize('omniProxy.home.status', 'System Status'), '');
+		this.appendDetail(statusCard, localize('omniProxy.home.port', 'API Port'), String(data.sections.endpoints.apiPort ?? 9222));
+		this.appendDetail(statusCard, localize('omniProxy.home.dashboard', 'Dashboard Port'), String(data.sections.endpoints.dashboardPort ?? 9223));
+		this.appendDetail(statusCard, localize('omniProxy.home.uptime', 'Uptime'), this.formatDuration(performance.now()));
+		this.appendDetail(statusCard, localize('omniProxy.home.autoStart', 'Auto-Start'), data.runtime.autoStart ? 'Enabled' : 'Disabled');
+		this.appendDetail(statusCard, localize('omniProxy.home.node', 'Node.js'), data.runtime.nodeVersion ?? 'Unknown');
+
+		const actionsCard = this.appendCard(statusRow, localize('omniProxy.home.quickActions', 'Quick Actions'), localize('omniProxy.home.quickActionsDesc', 'Common OmniProxy actions.'));
+		const actionsGrid = DOM.append(actionsCard, $('div'));
+		actionsGrid.style.display = 'grid';
+		actionsGrid.style.gridTemplateColumns = '1fr 1fr';
+		actionsGrid.style.gap = '6px';
+		actionsGrid.style.marginTop = '4px';
+		this.appendCommandButton(actionsGrid, localize('omniProxy.home.syncModels', 'Sync Models'), Codicon.sync, 'omniroute.syncModels', undefined, true);
+		this.appendCommandButton(actionsGrid, localize('omniProxy.home.connectProvider', 'Add Account'), Codicon.plug, 'omniroute.connectProvider', undefined, true);
+		this.appendCommandButton(actionsGrid, localize('omniProxy.home.createCombo', 'Create Combo'), Codicon.add, 'omniroute.createCombo', undefined, true);
+		this.appendCommandButton(actionsGrid, localize('omniProxy.home.restart', 'Restart Server'), Codicon.debugRestart, 'omniroute.restartServer', undefined, true);
+		this.appendCommandButton(actionsGrid, localize('omniProxy.home.logs', 'View Logs'), Codicon.output, 'omniroute.showLogs');
+		this.appendCommandButton(actionsGrid, localize('omniProxy.home.testAll', 'Test All Providers'), Codicon.beaker, 'omniroute.testProvidersBatch', 'all', true);
+
+		// ── Combos overview ───────────────────────────────────────────
+		if (data.sections.combos.items.length > 0) {
+			const combosList = this.appendCard(this.contentContainer!, localize('omniProxy.home.combosCard', 'Active Combos'), localize('omniProxy.home.combosDescription', 'Live usage metrics and routing strategies for your configured combos.'));
 			const quotaGrid = DOM.append(combosList, $('.omni-proxy-quota-grid'));
-			
-			for (const combo of data.sections.combos.items) {
+
+			for (const combo of data.sections.combos.items.slice(0, 6)) {
 				const metric = data.sections.combos.metrics.find(m => m.comboName === combo.name);
-				
-				const modelsDesc = Array.isArray(combo.models) && combo.models.length > 0 
-					? combo.models.map(m => typeof m === 'string' ? m : (m as any)?.model || 'unknown').join(', ') 
+				const modelsDesc = Array.isArray(combo.models) && combo.models.length > 0
+					? combo.models.map(m => typeof m === 'string' ? m : (m as any)?.model || 'unknown').join(', ')
 					: '0 models';
-				
+
 				const card = DOM.append(quotaGrid, $('.omni-proxy-quota-item'));
-				
 				const header = DOM.append(card, $('.omni-proxy-quota-item-header'));
 				const titleContainer = DOM.append(header, $('div'));
 				DOM.append(titleContainer, $('.omni-proxy-quota-item-title', {}, combo.name));
 				DOM.append(titleContainer, $('.omni-proxy-quota-item-subtitle', {}, `${combo.strategy ?? 'priority'} · ${modelsDesc}`));
-				
 				if (combo.updatedAt) {
 					DOM.append(header, $('.omni-proxy-quota-item-badge', {}, this.formatTimestamp(combo.updatedAt)));
 				}
-				
+
 				const progressContainer = DOM.append(card, $('.omni-proxy-progress-container'));
 				const labels = DOM.append(progressContainer, $('.omni-proxy-progress-labels'));
-				
+
 				if (metric) {
-					DOM.append(labels, $('.omni-proxy-progress-label-title', {}, `${metric.requests} reqs · ${metric.avgLatencyMs}ms lat`));
+					DOM.append(labels, $('.omni-proxy-progress-label-title', {}, `${metric.requests} reqs · ${metric.avgLatencyMs}ms`));
 					DOM.append(labels, $('.omni-proxy-progress-label-value', {}, `${metric.successRate}%`));
-					
 					const barBg = DOM.append(progressContainer, $('.omni-proxy-progress-bar-bg'));
 					const barFill = DOM.append(barBg, $('.omni-proxy-progress-bar-fill'));
 					barFill.style.width = `${metric.successRate}%`;
 					barFill.style.backgroundColor = metric.successRate > 90 ? 'var(--vscode-testing-iconPassed)' : (metric.successRate > 70 ? 'var(--vscode-testing-iconQueued)' : 'var(--vscode-testing-iconFailed)');
 				} else {
-					DOM.append(labels, $('.omni-proxy-progress-label-title', {}, 'No usage data recorded yet'));
+					DOM.append(labels, $('.omni-proxy-progress-label-title', {}, 'No usage data yet'));
 					DOM.append(labels, $('.omni-proxy-progress-label-value', {}, '0%'));
-					
 					const barBg = DOM.append(progressContainer, $('.omni-proxy-progress-bar-bg'));
-					const barFill = DOM.append(barBg, $('.omni-proxy-progress-bar-fill'));
-					barFill.style.width = `0%`;
-					barFill.style.backgroundColor = 'var(--vscode-testing-iconFailed)';
+					DOM.append(barBg, $('.omni-proxy-progress-bar-fill')).style.width = '0%';
 				}
-				
+
 				const footer = DOM.append(card, $('div'));
-				footer.style.marginTop = '12px';
-				footer.style.display = 'flex';
-				footer.style.justifyContent = 'flex-end';
-				footer.style.gap = '8px';
-				
+				footer.style.cssText = 'margin-top: 12px; display: flex; justify-content: flex-end; gap: 8px;';
 				this.appendCommandButton(footer, localize('omniProxy.combos.test', 'Test'), Codicon.beaker, 'omniroute.testCombo', combo.name, true);
 				this.appendCommandButton(footer, localize('omniProxy.combos.delete', 'Delete'), Codicon.trash, 'omniroute.deleteCombo', combo.id, true);
 			}
 		}
 	}
+
+	/** Render a simple inline SVG bar chart into the given card container */
+	private renderBarChart(container: HTMLElement, rows: readonly OmniProxyUsageBreakdownRow[], field: 'cost' | 'requests'): void {
+		if (!rows.length) {
+			this.appendEmptyNote(container, localize('omniProxy.home.noChartData', 'No data available yet.'));
+			return;
+		}
+
+		const maxVal = Math.max(...rows.map(r => r[field]));
+		if (maxVal <= 0) {
+			this.appendEmptyNote(container, localize('omniProxy.home.noChartData', 'No data available yet.'));
+			return;
+		}
+
+		const chartWrap = DOM.append(container, $('div'));
+		chartWrap.style.marginTop = '10px';
+		chartWrap.style.display = 'flex';
+		chartWrap.style.flexDirection = 'column';
+		chartWrap.style.gap = '5px';
+
+		for (const row of rows) {
+			const rowEl = DOM.append(chartWrap, $('div'));
+			rowEl.style.display = 'flex';
+			rowEl.style.alignItems = 'center';
+			rowEl.style.gap = '8px';
+
+			const label = DOM.append(rowEl, $('span'));
+			label.style.cssText = 'font-size: 11px; color: var(--vscode-descriptionForeground); width: 100px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;';
+			label.textContent = row.label;
+			label.title = row.label;
+
+			const barBg = DOM.append(rowEl, $('div'));
+			barBg.style.cssText = 'flex: 1; height: 14px; background: var(--vscode-scrollbarSlider-background); border-radius: 3px; overflow: hidden;';
+
+			const barFill = DOM.append(barBg, $('div'));
+			const pct = (row[field] / maxVal) * 100;
+			barFill.style.cssText = `height: 100%; width: ${pct}%; background: var(--vscode-textLink-activeForeground); border-radius: 3px; transition: width 0.4s ease;`;
+
+			const valEl = DOM.append(rowEl, $('span'));
+			valEl.style.cssText = 'font-size: 11px; font-weight: 600; width: 60px; text-align: right; flex-shrink: 0;';
+			valEl.textContent = field === 'cost'
+				? this.formatCurrency(row[field])
+				: this.formatNumber(row[field]);
+		}
+	}
+
+
 
 	private renderProvidersSection(data: OmniProxyDashboardData): void {
 		this.renderHeader(localize('omniProxy.providers.title', 'Providers'), localize('omniProxy.providers.description', 'Manage your AI provider connections inside a native OmniCode editor.'));
@@ -1340,15 +1577,15 @@ export class OmniProxyManagementEditor extends EditorPane {
 		return card;
 	}
 
-	private appendMetricCard(container: HTMLElement, title: string, value: string, description: string, valueColor?: string): void {
-		const card = DOM.append(container, $('.omni-proxy-card.metric'));
-		DOM.append(card, $('div.omni-proxy-card-label', {}, title));
-		const metricEl = DOM.append(card, $('div.omni-proxy-card-metric', {}, value));
-		if (valueColor) {
-			metricEl.style.color = valueColor;
-		}
-		DOM.append(card, $('div.omni-proxy-card-description', {}, description));
-	}
+	// private appendMetricCard(container: HTMLElement, title: string, value: string, description: string, valueColor?: string): void {
+	// 	const card = DOM.append(container, $('.omni-proxy-card.metric'));
+	// 	DOM.append(card, $('div.omni-proxy-card-label', {}, title));
+	// 	const metricEl = DOM.append(card, $('div.omni-proxy-card-metric', {}, value));
+	// 	if (valueColor) {
+	// 		metricEl.style.color = valueColor;
+	// 	}
+	// 	DOM.append(card, $('div.omni-proxy-card-description', {}, description));
+	// }
 
 	private appendDetail(container: HTMLElement, label: string, value: string): void {
 		const row = DOM.append(container, $('.omni-proxy-detail-row'));

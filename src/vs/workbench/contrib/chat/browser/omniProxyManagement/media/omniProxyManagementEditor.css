@@ -729,3 +729,44 @@
 .omni-proxy-table tr:last-child td {
 	border-bottom: none;
 }
+
+/* Home Dashboard specific layouts */
+.omni-proxy-home-metrics {
+	display: flex;
+	gap: 10px;
+	margin-bottom: 14px;
+	flex-wrap: wrap;
+}
+
+.omni-proxy-home-two-col {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 14px;
+	margin-bottom: 14px;
+}
+
+@media (max-width: 900px) {
+	.omni-proxy-home-two-col {
+		grid-template-columns: 1fr;
+	}
+}
+
+.omni-proxy-home-col {
+	display: flex;
+	flex-direction: column;
+	gap: 14px;
+	min-width: 0;
+}
+
+.omni-proxy-home-status-row {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 14px;
+	margin-bottom: 14px;
+}
+
+@media (max-width: 900px) {
+	.omni-proxy-home-status-row {
+		grid-template-columns: 1fr;
+	}
+}

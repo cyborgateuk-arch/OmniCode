@@ -23,7 +23,7 @@ import { registerMonitorFetcher } from "./quotaMonitor.ts";
 const CODEX_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
 
 // Cache TTL — short enough to be reactive, long enough to avoid rate limits
-const CACHE_TTL_MS = 60_000; // 60 seconds
+const CACHE_TTL_MS = parseInt(process.env.CODEX_QUOTA_CACHE_TTL_MS || '60000', 10); // 60 seconds
 
 // Per-account quota window info (richer than QuotaInfo — includes both windows)
 export interface CodexDualWindowQuota extends QuotaInfo {

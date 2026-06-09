@@ -1,5 +1,5 @@
 const MAX_SIGNATURES = 1000;
-const TTL_MS = 1000 * 60 * 60;
+const TTL_MS = parseInt(process.env.GEMINI_SIGNATURE_CACHE_TTL_MS || String(1000 * 60 * 60), 10);
 
 export type SignatureCacheMode = "enabled" | "bypass" | "bypass-strict";
 

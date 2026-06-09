@@ -33,7 +33,7 @@ import { registerQuotaFetcher, type QuotaInfo } from "./quotaPreflight.ts";
 import { registerMonitorFetcher } from "./quotaMonitor.ts";
 
 const CROF_USAGE_URL = "https://crof.ai/usage_api/";
-const CACHE_TTL_MS = 60_000;
+const CACHE_TTL_MS = parseInt(process.env.CROF_USAGE_CACHE_TTL_MS || '60000', 10);
 
 /** Crof-specific quota info: surfaces both raw signals so the UI can show them. */
 export interface CrofQuota extends QuotaInfo {

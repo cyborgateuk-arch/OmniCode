@@ -282,6 +282,7 @@ export interface IChatResponseModel {
 	 */
 	readonly confirmationAdjustedTimestamp: IObservable<number>;
 	readonly isComplete: boolean;
+	readonly currentActiveComboModel: IObservable<string | undefined>;
 	readonly isCanceled: boolean;
 	readonly isPendingConfirmation: IObservable<{ startedWaitingAt: number; detail?: string } | undefined>;
 	readonly isInProgress: IObservable<boolean>;
@@ -828,15 +829,23 @@ export class Response extends AbstractResponse implements IDisposable {
 				.filter(p => p.kind !== 'textEditGroup')
 				.at(-1);
 
-			if (!lastResponsePart || lastResponsePart.kind !== 'markdownContent' || !canMergeMarkdownStrings(lastResponsePart.content, progress.content)) {
+			// Strip the <!-- omniModel: ... --> tracking tag injected by OmniProxy combo routing
+			// before storing in _responseParts so it never appears in the visible chat UI.
+			const strippedValue = progress.content.value.replace(/<!--\s*omniModel:.*?-->/g, '');
+			const strippedProgress = strippedValue !== progress.content.value
+				? { ...progress, content: { ...progress.content, value: strippedValue } }
+				: progress;
+
+			if (!lastResponsePart || lastResponsePart.kind !== 'markdownContent' || !canMergeMarkdownStrings(lastResponsePart.content, strippedProgress.content)) {
 				// The last part can't be merged with- not markdown, or markdown with different permissions
-				this._responseParts.push(progress);
+				this._responseParts.push(strippedProgress);
 			} else {
 				// Don't modify the current object, since it's being diffed by the renderer
 				const idx = this._responseParts.indexOf(lastResponsePart);
-				this._responseParts[idx] = { ...lastResponsePart, content: appendMarkdownString(lastResponsePart.content, progress.content) };
+				this._responseParts[idx] = { ...lastResponsePart, content: appendMarkdownString(lastResponsePart.content, strippedProgress.content) };
 			}
 			this._contentChanged(quiet);
+
 		} else if (progress.kind === 'thinking') {
 
 			// tries to split thinking chunks if it is an array. only while certain models give us array chunks.
@@ -1092,6 +1101,7 @@ export class ChatResponseModel extends Disposable implements IChatResponseModel 
 	private readonly _timestamp: number;
 	private _timeSpentWaitingAccumulator: number;
 	private _elapsedMs: number | undefined;
+	private readonly _currentActiveComboModel = observableValue<string | undefined>(this, undefined);
 
 	public confirmationAdjustedTimestamp: IObservable<number>;
 
@@ -1190,6 +1200,10 @@ export class ChatResponseModel extends Disposable implements IChatResponseModel 
 
 	public get elapsedMs(): number | undefined {
 		return this._elapsedMs;
+	}
+
+	public get currentActiveComboModel(): IObservable<string | undefined> {
+		return this._currentActiveComboModel;
 	}
 
 	public get username(): string {
@@ -1384,6 +1398,17 @@ export class ChatResponseModel extends Disposable implements IChatResponseModel 
 	 */
 	updateContent(responsePart: IChatProgressResponseContent | IChatTextEdit | IChatNotebookEdit | IChatExternalToolInvocationUpdate, quiet?: boolean) {
 		this._response.updateContent(responsePart, quiet);
+
+		if (responsePart.kind === 'markdownContent') {
+			const fullText = this._response.toString();
+			const matches = [...fullText.matchAll(/<!--\s*omniModel:\s*(.*?)\s*-->/g)];
+			if (matches.length > 0) {
+				const lastMatch = matches[matches.length - 1][1].trim();
+				if (this._currentActiveComboModel.get() !== lastMatch) {
+					this._currentActiveComboModel.set(lastMatch, undefined);
+				}
+			}
+		}
 	}
 
 	resolveInlineReference(resolveId: string, resolvedReference: IChatContentInlineReference): boolean {
@@ -1567,6 +1592,7 @@ export interface IChatRequestNeedsInputInfo {
 }
 
 export interface IChatModel extends IDisposable {
+	readonly currentActiveComboModel: IObservable<string | undefined>;
 	readonly onDidDispose: Event<void>;
 	readonly onDidChange: Event<IChatChangeEvent>;
 
@@ -2145,6 +2171,14 @@ export class ChatModel extends Disposable implements IChatModel {
 	}
 	public setWorkingDirectory(uri: URI | undefined): void {
 		this._workingDirectory = uri;
+	}
+
+	public get currentActiveComboModel(): IObservable<string | undefined> {
+		const lastRequest = this._requests.at(-1);
+		if (lastRequest && lastRequest.response) {
+			return lastRequest.response.currentActiveComboModel;
+		}
+		return observableValue<string | undefined>(this, undefined);
 	}
 
 	getPendingRequests(): readonly IChatPendingRequest[] {

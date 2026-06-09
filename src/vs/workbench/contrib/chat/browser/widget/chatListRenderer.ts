@@ -745,9 +745,27 @@ export class ChatListItemRenderer extends Disposable implements ITreeRenderer<Ch
 		templateData.footerToolbar.context = element;
 
 		// Render result details in footer if available
-		if (isResponseVM(element) && element.result?.details) {
-			templateData.footerDetailsContainer.textContent = element.result.details;
-			templateData.footerDetailsContainer.classList.remove('hidden');
+		if (isResponseVM(element)) {
+			templateData.elementDisposables.add(autorun(reader => {
+				const activeComboModel = element.currentActiveComboModel.read(reader);
+				const details = element.result?.details;
+				
+				let detailsText = details || '';
+				if (activeComboModel) {
+					if (detailsText) {
+						detailsText += ` (${activeComboModel})`;
+					} else {
+						detailsText = activeComboModel;
+					}
+				}
+
+				if (detailsText) {
+					templateData.footerDetailsContainer.textContent = detailsText;
+					templateData.footerDetailsContainer.classList.remove('hidden');
+				} else {
+					templateData.footerDetailsContainer.classList.add('hidden');
+				}
+			}));
 		} else {
 			templateData.footerDetailsContainer.classList.add('hidden');
 		}

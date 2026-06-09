@@ -234,6 +234,7 @@ export interface IChatResponseViewModel {
 	readonly confirmationAdjustedTimestamp: IObservable<number>;
 	readonly usageObs: IObservable<IChatUsage | undefined>;
 	readonly completionTokenCountObs: IObservable<number | undefined>;
+	readonly currentActiveComboModel: IObservable<string | undefined>;
 	readonly shouldBeRemovedOnSend: IChatRequestDisablement | undefined;
 	readonly isCompleteAddedRequest: boolean;
 	renderData?: IChatResponseRenderData;
@@ -680,6 +681,10 @@ export class ChatResponseViewModel extends Disposable implements IChatResponseVi
 
 	get completionTokenCountObs(): IObservable<number | undefined> {
 		return this._model.completionTokenCountObs;
+	}
+
+	get currentActiveComboModel(): IObservable<string | undefined> {
+		return this._model.currentActiveComboModel;
 	}
 
 	constructor(

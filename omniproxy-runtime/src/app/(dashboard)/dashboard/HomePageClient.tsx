@@ -12,6 +12,7 @@ import { AI_PROVIDERS, FREE_PROVIDERS, OAUTH_PROVIDERS } from "@/shared/constant
 import { useNotificationStore } from "@/store/notificationStore";
 import { copyToClipboard } from "@/shared/utils/clipboard";
 import type { NewsAnnouncement } from "@/shared/utils/releaseNotes";
+import { UsageLineChart, CostPieChart, ProviderBarChart } from "./DashboardCharts";
 
 type UpdateStep = {
   step: string;
@@ -85,6 +86,7 @@ export default function HomePageClient({ machineId }: HomePageClientProps) {
   const [baseUrl, setBaseUrl] = useState("/v1");
   const [selectedProvider, setSelectedProvider] = useState(null);
   const [providerMetrics, setProviderMetrics] = useState({});
+  const [analytics, setAnalytics] = useState<any>(null);
 
   const [versionInfo, setVersionInfo] = useState<VersionInfo | null>(null);
   const [updating, setUpdating] = useState(false);
@@ -99,11 +101,12 @@ export default function HomePageClient({ machineId }: HomePageClientProps) {
 
   const fetchData = useCallback(async () => {
     try {
-      const [provRes, modelsRes, metricsRes, versionRes] = await Promise.all([
+      const [provRes, modelsRes, metricsRes, versionRes, analyticsRes] = await Promise.all([
         fetch("/api/providers"),
         fetch("/api/models"),
         fetch("/api/provider-metrics"),
         fetch("/api/system/version"),
+        fetch("/api/usage/analytics?range=30d"),
       ]);
       if (provRes.ok) {
         const provData = await provRes.json();
@@ -120,6 +123,10 @@ export default function HomePageClient({ machineId }: HomePageClientProps) {
       if (versionRes.ok) {
         const versionData = await versionRes.json();
         setVersionInfo(versionData);
+      }
+      if (analyticsRes.ok) {
+        const analyticsData = await analyticsRes.json();
+        setAnalytics(analyticsData);
       }
     } catch (e) {
       console.log("Error fetching data:", e);
@@ -644,6 +651,49 @@ export default function HomePageClient({ machineId }: HomePageClientProps) {
         </div>
       )}
 
+      {/* Analytics Overview (30 Days) */}
+      {analytics && analytics.summary && (
+        <div className="flex flex-col gap-5">
+          <h2 className="text-lg font-semibold">{t("analyticsOverview") || "Analytics Overview (Last 30 Days)"}</h2>
+          
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <Card className="flex flex-col justify-center p-4">
+              <span className="text-sm text-text-muted">Total Requests</span>
+              <span className="text-2xl font-bold">{analytics.summary.totalRequests.toLocaleString()}</span>
+            </Card>
+            <Card className="flex flex-col justify-center p-4">
+              <span className="text-sm text-text-muted">Total Cost</span>
+              <span className="text-2xl font-bold">${analytics.summary.totalCost?.toFixed(4) || "0.0000"}</span>
+            </Card>
+            <Card className="flex flex-col justify-center p-4">
+              <span className="text-sm text-text-muted">Success Rate</span>
+              <span className="text-2xl font-bold text-green-500">{analytics.summary.successRatePct}%</span>
+            </Card>
+            <Card className="flex flex-col justify-center p-4">
+              <span className="text-sm text-text-muted">Avg Latency</span>
+              <span className="text-2xl font-bold">{analytics.summary.avgLatencyMs}ms</span>
+            </Card>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+            <Card className="flex flex-col gap-4">
+              <h3 className="text-md font-semibold">Usage & Cost Trend</h3>
+              <UsageLineChart data={analytics.dailyTrend} />
+            </Card>
+            <div className="grid grid-cols-1 gap-5">
+              <Card className="flex flex-col gap-4">
+                <h3 className="text-md font-semibold">Cost Distribution</h3>
+                <CostPieChart data={analytics.byProvider} />
+              </Card>
+              <Card className="flex flex-col gap-4">
+                <h3 className="text-md font-semibold">Top Providers (Requests)</h3>
+                <ProviderBarChart data={analytics.byProvider} />
+              </Card>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Quick Start */}
       <Card>
         <div className="flex flex-col gap-5">
@@ -783,14 +833,21 @@ export default function HomePageClient({ machineId }: HomePageClientProps) {
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-          {providerStats.map((item) => (
-            <ProviderOverviewCard
-              key={item.id}
-              item={item}
-              metrics={providerMetrics[item.provider.alias] || providerMetrics[item.id]}
-              onClick={() => setSelectedProvider(item)}
-            />
-          ))}
+          {providerStats.map((item) => {
+            const aliasMetrics = providerMetrics[item.provider.alias] || providerMetrics[item.id];
+            const analyticsProv = analytics?.byProvider?.find(
+              (p: any) => p.provider === item.provider.alias || p.provider === item.id
+            );
+            return (
+              <ProviderOverviewCard
+                key={item.id}
+                item={item}
+                metrics={aliasMetrics}
+                analyticsProvider={analyticsProv}
+                onClick={() => setSelectedProvider(item)}
+              />
+            );
+          })}
         </div>
       </Card>
 
@@ -809,10 +866,12 @@ export default function HomePageClient({ machineId }: HomePageClientProps) {
 function ProviderOverviewCard({
   item,
   metrics,
+  analyticsProvider,
   onClick,
 }: {
   item: ProviderSummaryItem;
   metrics?: ProviderMetricSummary;
+  analyticsProvider?: any;
   onClick: () => void;
 }) {
   const t = useTranslations("home");
@@ -862,6 +921,17 @@ function ProviderOverviewCard({
               </span>
               <span className="text-[10px] text-text-muted">{metrics.successRate}%</span>
               <span className="text-[10px] text-text-muted">~{metrics.avgLatencyMs}ms</span>
+            </div>
+          )}
+          {analyticsProvider && analyticsProvider.cost !== undefined && (
+            <div className="flex items-center gap-2 mt-1">
+              <span className="text-[10px] font-semibold text-emerald-500" title="Total Cost">
+                ${analyticsProvider.cost.toFixed(4)}
+              </span>
+              <span className="text-[10px] text-text-muted">|</span>
+              <span className="text-[10px] text-text-muted" title="Total Tokens">
+                {analyticsProvider.totalTokens.toLocaleString()} tokens
+              </span>
             </div>
           )}
         </div>

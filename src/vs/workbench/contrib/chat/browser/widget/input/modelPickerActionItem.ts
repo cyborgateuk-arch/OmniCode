@@ -21,6 +21,7 @@ import { ModelPickerWidget } from './chatModelPicker.js';
 
 export interface IModelPickerDelegate {
 	readonly currentModel: IObservable<ILanguageModelChatMetadataAndIdentifier | undefined>;
+	readonly currentActiveComboModel?: IObservable<string | undefined>;
 	setModel(model: ILanguageModelChatMetadataAndIdentifier): void;
 	getModels(): ILanguageModelChatMetadataAndIdentifier[];
 	useGroupedModelPicker(): boolean;
@@ -58,6 +59,11 @@ export class ModelPickerActionItem extends BaseActionViewItem {
 			const model = delegate.currentModel.read(t);
 			this._pickerWidget.setSelectedModel(model);
 			this._updateTooltip();
+		}));
+
+		this._register(autorun(t => {
+			const activeComboModel = delegate.currentActiveComboModel?.read(t);
+			this._pickerWidget.setActiveComboModel(activeComboModel);
 		}));
 
 		// Sync widget → delegate when user picks a model
