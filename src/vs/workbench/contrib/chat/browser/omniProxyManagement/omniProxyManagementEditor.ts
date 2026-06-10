@@ -10,6 +10,7 @@ import { Codicon } from '../../../../../base/common/codicons.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { getErrorMessage } from '../../../../../base/common/errors.js';
 import { DisposableStore } from '../../../../../base/common/lifecycle.js';
+import { FileAccess } from '../../../../../base/common/network.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { localize } from '../../../../../nls.js';
 import { IContextKey, IContextKeyService } from '../../../../../platform/contextkey/common/contextkey.js';
@@ -1548,7 +1549,7 @@ export class OmniProxyManagementEditor extends EditorPane {
 	private appendProviderCard(container: HTMLElement, provider: OmniProxyDashboardProvider): void {
 		const card = DOM.append(container, $('.omni-proxy-provider-card'));
 		const icon = DOM.append(card, $('.omni-proxy-provider-icon'));
-		icon.textContent = provider.name.split(/\s+/).slice(0, 2).map(part => part.charAt(0).toUpperCase()).join('').slice(0, 2);
+		this.setProviderIcon(icon, provider);
 
 		const content = DOM.append(card, $('.omni-proxy-provider-card-content'));
 		const titleRow = DOM.append(content, $('.omni-proxy-provider-card-title-row'));
@@ -1568,6 +1569,135 @@ export class OmniProxyManagementEditor extends EditorPane {
 		this.appendCommandButton(footer, localize('omniProxy.provider.guide', 'Guide'), Codicon.book, 'omniroute.showProviderGuide', provider.id);
 		const actionLabel = provider.connectionCount > 0 ? localize('omniProxy.provider.addAccount', 'Add Account') : localize('omniProxy.provider.connect', 'Connect');
 		this.appendCommandButton(footer, actionLabel, Codicon.plug, 'omniroute.connectProvider', provider.id, true);
+	}
+
+	private static readonly providerIconCache = new Map<string, string>();
+
+	private setProviderIcon(iconEl: HTMLElement, provider: OmniProxyDashboardProvider): void {
+		iconEl.textContent = '';
+		
+		const cachedUrl = OmniProxyManagementEditor.providerIconCache.get(provider.id);
+		if (cachedUrl) {
+			iconEl.classList.add('has-logo-img');
+			iconEl.style.background = 'transparent';
+			const cachedImg = document.createElement('img');
+			cachedImg.style.width = '100%';
+			cachedImg.style.height = '100%';
+			cachedImg.style.objectFit = 'contain';
+			cachedImg.style.borderRadius = '3px';
+			cachedImg.alt = provider.name;
+			cachedImg.src = cachedUrl;
+			iconEl.appendChild(cachedImg);
+			return;
+		}
+
+		iconEl.classList.remove('has-logo-img');
+		// Clear any previous text/initials background when we have (or will have) a logo
+		iconEl.style.background = 'transparent';
+
+		const candidates = this.getProviderLogoCandidates(provider.id);
+
+		const img = document.createElement('img');
+		img.style.width = '100%';
+		img.style.height = '100%';
+		img.style.objectFit = 'contain';
+		img.style.borderRadius = '3px';
+		img.alt = provider.name;
+
+		// Prefer local media/ copy (same-origin, allowed by workbench CSP)
+		const tryLocalMedia = () => {
+			let candidateIndex = 0;
+			const tryNextLocal = () => {
+				if (candidateIndex >= candidates.length) {
+					void tryRuntime();
+					return;
+				}
+				const candidate = candidates[candidateIndex++];
+				const localUrl = FileAccess.asBrowserUri(`vs/workbench/contrib/chat/browser/omniProxyManagement/media/providers/${candidate}`).toString(true);
+				const testImg = new Image();
+				testImg.onload = () => {
+					img.src = localUrl;
+					img.style.display = 'block';
+					iconEl.classList.add('has-logo-img');
+					iconEl.appendChild(img);
+					OmniProxyManagementEditor.providerIconCache.set(provider.id, localUrl);
+				};
+				testImg.onerror = () => {
+					tryNextLocal();
+				};
+				testImg.src = localUrl;
+			};
+			
+			tryNextLocal();
+		};
+
+		const runtimeBase = this.dashboardData?.runtime?.baseUrl || 'http://127.0.0.1:20128';
+		const baseUrl = runtimeBase.replace(/\/+$/, '');
+
+		const tryRuntime = async () => {
+			for (const candidate of candidates) {
+				try {
+					const res = await fetch(`${baseUrl}/providers/${candidate}`);
+					if (res.ok) {
+						const blob = await res.blob();
+						const objectUrl = URL.createObjectURL(blob);
+						img.src = `${baseUrl}/providers/${candidate}`;
+						img.style.display = 'block';
+						iconEl.classList.add('has-logo-img');
+						iconEl.appendChild(img);
+						OmniProxyManagementEditor.providerIconCache.set(provider.id, img.src);
+						return;
+					}
+				} catch {
+					// next
+				}
+			}
+			// ultimate fallback
+			iconEl.textContent = provider.name.split(/\s+/).slice(0, 2).map(part => part.charAt(0).toUpperCase()).join('').slice(0, 2);
+			iconEl.style.background = '';
+		};
+
+		// Start with local media (will chain to runtime on failure)
+		tryLocalMedia();
+	}
+
+	private getProviderLogoCandidates(id: string): string[] {
+		const base = id.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+		const list: string[] = [
+			`${base}.svg`,
+			`${base}.png`,
+			`${base}-web.svg`,
+			`${base}-web.png`,
+			`${base}-m.png`,
+			`${base}-dark.svg`,
+			`${base}-light.svg`,
+		];
+
+		// Common special cases / aliases observed in the logo set
+		const lower = base.toLowerCase();
+		if (lower.includes('anthropic') || lower.includes('claude')) {
+			list.push('claude.svg', 'claude-web.svg', 'anthropic-m.png');
+		}
+		if (lower.includes('openai') || lower.includes('codex') || lower.includes('oai') || lower.includes('gpt')) {
+			list.push('codex.svg', 'oai-r.png', 'oai-cc.png');
+		}
+		if (lower.includes('gemini') || lower.includes('google')) {
+			list.push('gemini-cli.svg');
+		}
+		if (lower.includes('cursor')) list.push('cursor.png');
+		if (lower.includes('copilot')) list.push('copilot.png');
+		if (lower.includes('continue')) list.push('continue.png');
+		if (lower.includes('opencode')) list.push('opencode.svg', 'opencode-light.svg', 'opencode-dark.svg');
+		if (lower.includes('kilocode') || lower.includes('kilo')) list.push('kilocode.svg', 'kilo-gateway.svg');
+		if (lower.includes('kiro')) list.push('kiro.svg');
+		if (lower.includes('droid')) list.push('droid.svg');
+		if (lower.includes('gitlab')) list.push('gitlab.svg', 'gitlab-duo.svg');
+
+		// Generic fallbacks that always exist
+		list.push('apikey.svg', 'oauth.svg');
+
+		// Dedupe while preserving order
+		return Array.from(new Set(list));
 	}
 
 	private appendCard(container: HTMLElement, title: string, description: string): HTMLElement {

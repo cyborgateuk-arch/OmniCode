@@ -451,6 +451,7 @@ export class OnboardingVariationA extends Disposable implements IOnboardingServi
 
 
 
+/*
 	// @ts-ignore
 	private async _handleSignIn(socialProvider?: string): Promise<void> {
 		const provider = socialProvider ?? 'github';
@@ -483,6 +484,7 @@ export class OnboardingVariationA extends Disposable implements IOnboardingServi
 			});
 		}
 	}
+*/
 
 
 
