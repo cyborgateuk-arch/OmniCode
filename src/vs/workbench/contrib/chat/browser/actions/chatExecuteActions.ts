@@ -196,6 +196,7 @@ export class ChatSubmitAction extends SubmitAction {
 			ChatContextKeys.inputHasText,
 			ContextKeyExpr.or(whenNotInProgress, ChatContextKeys.editingRequestType.isEqualTo(ChatContextKeys.EditingRequestType.Sent)),
 			ChatContextKeys.chatSessionOptionsValid,
+			ChatContextKeys.chatModelsAvailable,
 		);
 
 		super({

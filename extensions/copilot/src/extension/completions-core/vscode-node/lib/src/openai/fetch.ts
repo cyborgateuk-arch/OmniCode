@@ -292,7 +292,7 @@ export type CompletionHeaders = {
 };
 
 function getProxyEngineUrl(accessor: ServicesAccessor, token: CopilotToken, modelId: string, endpoint: string): string {
-	return getEndpointUrl(accessor, token, 'proxy', 'v1/engines', modelId, endpoint);
+	return getEndpointUrl(accessor, token, 'proxy', 'v1', endpoint);
 }
 
 export function sanitizeRequestOptionTelemetry(
@@ -355,7 +355,7 @@ export class LiveOpenAIFetcher extends OpenAIFetcher {
 		const endpoint = 'completions';
 		const copilotToken = this.copilotTokenManager.token ?? await this.copilotTokenManager.getToken();
 
-		const request: CompletionRequest = {
+		const request: CompletionRequest & { model?: string } = {
 			prompt: params.prompt.prefix,
 			suffix: params.prompt.suffix,
 			max_tokens: getMaxSolutionTokens(),
@@ -365,7 +365,8 @@ export class LiveOpenAIFetcher extends OpenAIFetcher {
 			stop: getStops(params.languageId),
 			stream: true, // Always true: non streaming requests are not supported by this proxy
 			extra: params.extra,
-		} satisfies CompletionRequest;
+			model: params.engineModelId,
+		} as CompletionRequest & { model?: string };
 
 		{
 

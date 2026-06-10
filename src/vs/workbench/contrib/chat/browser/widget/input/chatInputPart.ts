@@ -391,6 +391,8 @@ export class ChatInputPart extends Disposable implements IHistoryNavigationWidge
 	private withinEditSessionKey: IContextKey<boolean>;
 	private filePartOfEditSessionKey: IContextKey<boolean>;
 	private chatSessionHasOptions: IContextKey<boolean>;
+	private chatModelsAvailable: IContextKey<boolean>;
+
 	private chatSessionOptionsValid: IContextKey<boolean>;
 	private agentSessionTypeKey: IContextKey<string>;
 	private chatSessionSupportsDelegationKey: IContextKey<boolean>;
@@ -644,6 +646,9 @@ export class ChatInputPart extends Disposable implements IHistoryNavigationWidge
 		this.withinEditSessionKey = ChatContextKeys.withinEditSessionDiff.bindTo(contextKeyService);
 		this.filePartOfEditSessionKey = ChatContextKeys.filePartOfEditSession.bindTo(contextKeyService);
 		this.chatSessionHasOptions = ChatContextKeys.chatSessionHasModels.bindTo(contextKeyService);
+		this.chatModelsAvailable = ChatContextKeys.chatModelsAvailable.bindTo(contextKeyService);
+		this.chatModelsAvailable.set(this.languageModelsService.getLanguageModelIds().length > 0);
+
 		this.chatSessionOptionsValid = ChatContextKeys.chatSessionOptionsValid.bindTo(contextKeyService);
 		this.agentSessionTypeKey = ChatContextKeys.agentSessionType.bindTo(contextKeyService);
 		this.chatSessionSupportsDelegationKey = ChatContextKeys.chatSessionSupportsDelegation.bindTo(contextKeyService);
@@ -697,6 +702,8 @@ export class ChatInputPart extends Disposable implements IHistoryNavigationWidge
 		this.initSelectedModel();
 
 		this._register(this.languageModelsService.onDidChangeLanguageModels(() => {
+			this.chatModelsAvailable.set(this.languageModelsService.getLanguageModelIds().length > 0);
+
 			if (shouldResetOnModelListChange(this._currentLanguageModel.get()?.identifier, this.getModels())) {
 				this.setCurrentLanguageModelToDefault();
 			}

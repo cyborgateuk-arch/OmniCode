@@ -63,11 +63,16 @@ export async function POST(request: Request) {
       // If the body has `prompt` but no `messages`, convert to chat format.
       if (body.prompt !== undefined && !body.messages) {
         const prompt = Array.isArray(body.prompt) ? body.prompt.join("\n") : String(body.prompt);
+        let finalPrompt = prompt;
+        if (body.suffix) {
+           finalPrompt = `<|fim_prefix|>${prompt}<|fim_suffix|>${body.suffix}<|fim_middle|>`;
+        }
         const normalized = {
           ...body,
-          messages: [{ role: "user", content: prompt }],
+          messages: [{ role: "user", content: finalPrompt }],
         };
         delete normalized.prompt;
+        delete normalized.suffix;
 
         const newRequest = new Request(request.url, {
           method: request.method,

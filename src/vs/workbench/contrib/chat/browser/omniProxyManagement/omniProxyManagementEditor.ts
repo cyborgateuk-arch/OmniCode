@@ -934,6 +934,7 @@ export class OmniProxyManagementEditor extends EditorPane {
 				if (connection.lastError) {
 					DOM.append(row.querySelector('.omni-proxy-list-row-copy') as HTMLElement, $('div.omni-proxy-list-row-note', {}, connection.lastError));
 				}
+				this.appendInlineCommand(row, localize('omniProxy.providers.deleteConnection', 'Delete'), Codicon.trash, 'omniroute.deleteProviderConnection', connection.id, true);
 			}
 		}
 
@@ -1639,8 +1640,7 @@ export class OmniProxyManagementEditor extends EditorPane {
 				try {
 					const res = await fetch(`${baseUrl}/providers/${candidate}`);
 					if (res.ok) {
-						const blob = await res.blob();
-						const objectUrl = URL.createObjectURL(blob);
+						await res.blob();
 						img.src = `${baseUrl}/providers/${candidate}`;
 						img.style.display = 'block';
 						iconEl.classList.add('has-logo-img');

@@ -109,7 +109,7 @@ export class AvailableModelsManager extends Disposable implements ICompletionsMo
 
 	static filterCompletionModels(data: ICompletionModelInformation[], editorPreviewFeaturesDisabled: boolean): ICompletionModelInformation[] {
 		return data
-			.filter(item => item.capabilities.type === 'completion')
+			.filter(item => item.capabilities?.type === 'completion' || item.capabilities?.type === 'chat')
 			.filter(item => !editorPreviewFeaturesDisabled || item.preview === false || item.preview === undefined);
 	}
 

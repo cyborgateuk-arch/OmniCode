@@ -1272,6 +1272,21 @@ export class ChatService extends Disposable implements IChatService {
 					const message = promptTextResult.message;
 
 					// --- Step 4: Build the agent request object ---
+					let resolvedUserSelectedModelId = options?.userSelectedModelId;
+					if (resolvedUserSelectedModelId === 'auto' || resolvedUserSelectedModelId === 'copilot/auto' || resolvedUserSelectedModelId?.includes('auto')) {
+						const omniModels = this.languageModelsService.getLanguageModelIds().filter(id => {
+							const m = this.languageModelsService.lookupLanguageModel(id);
+							if (!m) return false;
+							const vendor = m.vendor?.toLowerCase() || '';
+							const name = m.name?.toLowerCase() || '';
+							return vendor.includes('omni') || vendor === 'customendpoint' || id.toLowerCase().includes('omni') || name.includes('omni');
+						});
+						if (omniModels.length > 0) {
+							resolvedUserSelectedModelId = omniModels[Math.floor(Math.random() * omniModels.length)];
+							this.logService.trace(`[Chat] Intercepted auto model, routing randomly to OmniProxy model: ${resolvedUserSelectedModelId}`);
+						}
+					}
+
 					const buildAgentRequest = (agent: IChatAgentData, command?: IChatAgentCommand, enableCommandDetection?: boolean, isParticipantDetected?: boolean): IChatAgentRequest => {
 						const agentRequest: IChatAgentRequest = {
 							sessionResource: model.sessionResource,
@@ -1288,8 +1303,8 @@ export class ChatService extends Disposable implements IChatService {
 							acceptedConfirmationData: options?.acceptedConfirmationData,
 							rejectedConfirmationData: options?.rejectedConfirmationData,
 							agentHostSessionConfig: options?.agentHostSessionConfig,
-							userSelectedModelId: options?.userSelectedModelId,
-							modelConfiguration: options?.userSelectedModelId ? this.languageModelsService.getModelConfiguration(options.userSelectedModelId) : undefined,
+							userSelectedModelId: resolvedUserSelectedModelId,
+							modelConfiguration: resolvedUserSelectedModelId ? this.languageModelsService.getModelConfiguration(resolvedUserSelectedModelId) : undefined,
 							userSelectedTools: options?.userSelectedTools?.get(),
 							modeInstructions: options?.modeInfo?.modeInstructions,
 							permissionLevel: options?.modeInfo?.permissionLevel,

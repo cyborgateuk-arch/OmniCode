@@ -809,7 +809,10 @@ export class LanguageModelsService implements ILanguageModelsService {
 	}
 
 	getLanguageModelIds(): string[] {
-		return Array.from(this._modelCache.keys());
+		return Array.from(this._modelCache.keys()).filter(id => {
+			const m = this._modelCache.get(id);
+			return m && m.vendor !== 'copilot' && m.vendor !== 'copilotcli';
+		});
 	}
 
 	lookupLanguageModel(modelIdentifier: string): ILanguageModelChatMetadata | undefined {
@@ -1064,6 +1067,21 @@ export class LanguageModelsService implements ILanguageModelsService {
 	}
 
 	async sendChatRequest(modelId: string, from: ExtensionIdentifier | undefined, messages: IChatMessage[], options: ILanguageModelChatRequestOptions, token: CancellationToken): Promise<ILanguageModelChatResponse> {
+		const m = this._modelCache.get(modelId);
+		if (modelId === AUTO_MODEL_IDENTIFIER || m?.id === 'auto' || m?.vendor === 'copilot' || m?.vendor === 'copilotcli' || modelId.includes('gpt-4o-mini') || modelId.includes('gpt-5') || modelId.includes('claude')) {
+			const omniModels = Array.from(this._modelCache.keys()).filter(id => {
+				const m2 = this._modelCache.get(id);
+				if (!m2) return false;
+				const vendor = m2.vendor?.toLowerCase() || '';
+				const name = m2.name?.toLowerCase() || '';
+				return vendor.includes('omni') || vendor === 'customendpoint' || id.toLowerCase().includes('omni') || name.includes('omni');
+			});
+			if (omniModels.length > 0) {
+				modelId = omniModels[Math.floor(Math.random() * omniModels.length)];
+				this._logService.trace(`[LM] Intercepted Copilot model, routing randomly to OmniProxy model: ${modelId}`);
+			}
+		}
+
 		const metadata = this._modelCache.get(modelId);
 		const provider = this._providers.get(metadata?.vendor || '');
 		if (!provider) {
@@ -1101,11 +1119,22 @@ export class LanguageModelsService implements ILanguageModelsService {
 	}
 
 	computeTokenLength(modelId: string, message: string | IChatMessage, token: CancellationToken): Promise<number> {
-		const model = this._modelCache.get(modelId);
-		if (!model) {
-			throw new Error(`Chat model ${modelId} could not be found.`);
+		const m = this._modelCache.get(modelId);
+		if (modelId === AUTO_MODEL_IDENTIFIER || m?.id === 'auto' || m?.vendor === 'copilot' || m?.vendor === 'copilotcli' || modelId.includes('gpt-4o-mini') || modelId.includes('gpt-5') || modelId.includes('claude')) {
+			const omniModels = Array.from(this._modelCache.keys()).filter(id => {
+				const m2 = this._modelCache.get(id);
+				if (!m2) return false;
+				const vendor = m2.vendor?.toLowerCase() || '';
+				const name = m2.name?.toLowerCase() || '';
+				return vendor.includes('omni') || vendor === 'customendpoint' || id.toLowerCase().includes('omni') || name.includes('omni');
+			});
+			if (omniModels.length > 0) {
+				modelId = omniModels[Math.floor(Math.random() * omniModels.length)];
+			}
 		}
-		const provider = this._providers.get(model.vendor);
+
+		const metadata = this._modelCache.get(modelId);
+		const provider = this._providers.get(metadata?.vendor || '');
 		if (!provider) {
 			throw new Error(`Chat provider for model ${modelId} is not registered.`);
 		}

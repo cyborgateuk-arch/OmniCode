@@ -86,11 +86,11 @@ interface UsageStats {
 	readonly totalCompletionTokens: number;
 	readonly totalCost: number;
 	readonly byProvider: Record<string, {
-			readonly requests: number;
-			readonly promptTokens: number;
-			readonly completionTokens: number;
-			readonly cost: number;
-		}>;
+		readonly requests: number;
+		readonly promptTokens: number;
+		readonly completionTokens: number;
+		readonly cost: number;
+	}>;
 }
 
 interface ProxyItem {
@@ -123,8 +123,8 @@ interface ModelDescriptor {
 	readonly input_modalities?: readonly string[];
 	readonly supported_endpoints?: readonly string[];
 	readonly capabilities?: {
-			readonly vision?: boolean;
-		};
+		readonly vision?: boolean;
+	};
 }
 
 interface ProviderCatalogModel {
@@ -140,8 +140,8 @@ interface ProviderCatalogModel {
 	readonly outputTokenLimit?: number;
 	readonly input_modalities?: readonly string[];
 	readonly capabilities?: {
-			readonly vision?: boolean;
-		};
+		readonly vision?: boolean;
+	};
 }
 
 interface ProviderModelsPayload {
@@ -615,6 +615,20 @@ class OmniRouteService implements vscode.Disposable, vscode.TreeDataProvider<Tre
 		if (this.startedChild) {
 			this.childProcess?.kill();
 		}
+
+		// Ensure any stray Node.js dev server processes for OmniProxy are terminated
+		const portStr = this.getBaseUrl().port;
+		const port = portStr ? Number(portStr) : 20128;
+		if (port > 0) {
+			const info = this.findListeningProcessInfo(port);
+			if (info) {
+				this.terminateProcess(info.pid).catch(() => {});
+				if (info.ppid && info.ppid !== info.pid) {
+					this.terminateProcess(info.ppid).catch(() => {});
+				}
+			}
+		}
+
 		this.treeEmitter.dispose();
 		this.outputChannel.dispose();
 	}
@@ -674,6 +688,10 @@ class OmniRouteService implements vscode.Disposable, vscode.TreeDataProvider<Tre
 			}),
 			vscode.commands.registerCommand('omniroute.connectProvider', async (providerId?: string) => {
 				await this.connectProvider(providerId);
+				await this.refresh();
+			}),
+			vscode.commands.registerCommand('omniroute.deleteProviderConnection', async (id?: string) => {
+				await this.deleteProviderConnection(id);
 				await this.refresh();
 			}),
 			vscode.commands.registerCommand('omniroute.showProviderGuide', async (providerId?: string) => {
@@ -1177,7 +1195,75 @@ class OmniRouteService implements vscode.Disposable, vscode.TreeDataProvider<Tre
 		await this.runNpmCommand(['install', '--no-audit', '--no-fund']);
 		await this.ensureNativeModuleCompatibility({ forceRebuild: true });
 	}
+	private async deleteProviderConnection(id?: string): Promise<void> {
+		if (!id) {
+			const state = this.currentState ?? await this.refreshState();
+			const items = state.connections.map(c => ({
+				label: c.displayName || c.name || c.email || c.provider,
+				description: c.provider,
+				connectionId: c.id
+			}));
+			if (items.length === 0) {
+				vscode.window.showInformationMessage(vscode.l10n.t('No connected provider accounts to delete.'));
+				return;
+			}
+			const selected = await vscode.window.showQuickPick(items, {
+				placeHolder: vscode.l10n.t('Select a connected account to delete')
+			});
+			if (!selected) {
+				return;
+			}
+			id = selected.connectionId;
+		}
 
+		const confirm = await vscode.window.showWarningMessage(
+			vscode.l10n.t('Are you sure you want to delete this provider connection?'),
+			{ modal: true },
+			vscode.l10n.t('Delete')
+		);
+		if (confirm !== vscode.l10n.t('Delete')) {
+			return;
+		}
+
+		await this.ensureProxyReady();
+		try {
+			await this.requestJson(`/api/providers/${encodeURIComponent(id)}`, 'DELETE', undefined);
+			
+			// Cascade delete combos that relied on models that no longer exist
+			const connections = await this.fetchConnections();
+			const models = await this.fetchSelectableModels(connections);
+			const availableModelIds = new Set(models.map(m => m.id));
+
+			const comboResponse = await this.requestJson<{ readonly combos?: readonly OmniProxyComboItem[] }>('/api/combos', 'GET', undefined);
+			const combos = comboResponse.data.combos || [];
+
+			let deletedCombosCount = 0;
+			for (const combo of combos) {
+				const comboModels = (combo.models || []) as OmniProxyComboStep[];
+				const hasDeletedModel = comboModels.some(step => step.kind === 'model' && !availableModelIds.has(step.model));
+				if (hasDeletedModel) {
+					try {
+						await this.requestJson(`/api/combos/${encodeURIComponent(combo.id)}`, 'DELETE', undefined);
+						this.outputChannel.appendLine(`[${OMNIPROXY_BRAND_NAME}] Deleted combo '${combo.name}' because a required model was removed.`);
+						deletedCombosCount++;
+					} catch (comboErr) {
+						this.outputChannel.appendLine(`[${OMNIPROXY_BRAND_NAME}] Failed to delete combo '${combo.name}': ${comboErr instanceof Error ? comboErr.message : String(comboErr)}`);
+					}
+				}
+			}
+
+			if (deletedCombosCount > 0) {
+				vscode.window.showInformationMessage(vscode.l10n.t('Provider connection deleted. Also deleted {0} combo(s) that relied on its models.', deletedCombosCount));
+			} else {
+				vscode.window.showInformationMessage(vscode.l10n.t('Provider connection deleted.'));
+			}
+
+			await this.syncModels();
+			await this.refresh();
+		} catch (e) {
+			vscode.window.showErrorMessage(vscode.l10n.t('Failed to delete connection: {0}', e instanceof Error ? e.message : String(e)));
+		}
+	}
 	private async connectProvider(providerId?: string): Promise<void> {
 		await this.ensureProxyReady();
 		const providers = await this.getProviderCatalog();
@@ -2611,8 +2697,8 @@ class OmniRouteService implements vscode.Disposable, vscode.TreeDataProvider<Tre
 	async pickComboSteps(comboName: string, strategy: string): Promise<OmniProxyComboStep[]> {
 		type ComboTargetPick = vscode.QuickPickItem & {
 			readonly target:
-				| { readonly kind: 'model'; readonly model: ModelDescriptor }
-				| { readonly kind: 'combo-ref'; readonly combo: OmniProxyComboItem };
+			| { readonly kind: 'model'; readonly model: ModelDescriptor }
+			| { readonly kind: 'combo-ref'; readonly combo: OmniProxyComboItem };
 		};
 
 		let models: readonly ModelDescriptor[] = [];
@@ -3440,23 +3526,23 @@ class OmniRouteService implements vscode.Disposable, vscode.TreeDataProvider<Tre
 				return {
 					...sections,
 					providers: {
-					connections: state.connections.map(connection => ({
-						id: connection.id,
-						provider: connection.provider,
-						name: connection.name,
-						email: connection.email,
-						displayName: connection.displayName,
-						authType: connection.authType,
-						isActive: connection.isActive,
-						defaultModel: connection.defaultModel,
-						testStatus: connection.testStatus,
-						lastError: connection.lastError,
-						lastTested: connection.lastTested,
-						rateLimitProtection: (connection as ProviderConnection & { readonly rateLimitProtection?: boolean }).rateLimitProtection
-					})),
-					nodes: this.getSettledValue(nodesResult)?.nodes ?? [],
-					metrics: this.toProviderMetricItems(this.getSettledValue(providerMetricsResult)),
-					tokenHealth: this.getSettledValue(tokenHealthResult)
+						connections: state.connections.map(connection => ({
+							id: connection.id,
+							provider: connection.provider,
+							name: connection.name,
+							email: connection.email,
+							displayName: connection.displayName,
+							authType: connection.authType,
+							isActive: connection.isActive,
+							defaultModel: connection.defaultModel,
+							testStatus: connection.testStatus,
+							lastError: connection.lastError,
+							lastTested: connection.lastTested,
+							rateLimitProtection: (connection as ProviderConnection & { readonly rateLimitProtection?: boolean }).rateLimitProtection
+						})),
+						nodes: this.getSettledValue(nodesResult)?.nodes ?? [],
+						metrics: this.toProviderMetricItems(this.getSettledValue(providerMetricsResult)),
+						tokenHealth: this.getSettledValue(tokenHealthResult)
 					}
 				};
 			}
@@ -3764,7 +3850,8 @@ class OmniRouteService implements vscode.Disposable, vscode.TreeDataProvider<Tre
 		this.childProcess = spawn(this.getNpmPath(), ['run', 'dev'], {
 			cwd: this.omniRouteRoot,
 			env,
-			stdio: 'pipe'
+			stdio: 'pipe',
+			shell: process.platform === 'win32'
 		});
 		this.startedChild = true;
 
@@ -3834,7 +3921,8 @@ class OmniRouteService implements vscode.Disposable, vscode.TreeDataProvider<Tre
 					PRICING_SYNC_ENABLED: 'false',
 					PATH: `${path.dirname(this.getNodePath())}${path.delimiter}${process.env.PATH ?? ''}`
 				},
-				stdio: 'pipe'
+				stdio: 'pipe',
+				shell: process.platform === 'win32'
 			});
 
 			const logOutput = options?.logOutput !== false;
@@ -3999,7 +4087,8 @@ class OmniRouteService implements vscode.Disposable, vscode.TreeDataProvider<Tre
 					...process.env,
 					PATH: `${path.dirname(this.getNodePath())}${path.delimiter}${process.env.PATH ?? ''}`
 				},
-				stdio: 'pipe'
+				stdio: 'pipe',
+				shell: process.platform === 'win32'
 			});
 
 			processHandle.stdout.on('data', chunk => {

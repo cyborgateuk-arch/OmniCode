@@ -123,6 +123,13 @@ export class ModelMetadataFetcher extends Disposable implements IModelMetadataFe
 				}
 			}
 		}
+		for (const [, models] of this._familyMap) {
+			for (const model of models) {
+				if (isCompletionModelInformation(model)) {
+					completionModels.push(model);
+				}
+			}
+		}
 		return completionModels;
 	}
 
@@ -277,17 +284,28 @@ export class ModelMetadataFetcher extends Disposable implements IModelMetadataFe
 			this._requestLogger.logModelListCall(requestId, requestMetadata, data);
 			for (let model of data) {
 				model = await this._hydrateResolvedModel(model);
+				const isChatModel = isChatModelInformation(model);
 				const isCompletionModel = isCompletionModelInformation(model);
 				// The utility model is whatever model is deemed "fallback" by the server
-				if (model.is_chat_fallback && !isCompletionModel) {
+				if (!this._copilotUtilityModel && isChatModel) {
 					this._copilotUtilityModel = model;
 				}
-				const family = model.capabilities.family;
-				const familyMap = isCompletionModel ? this._completionsFamilyMap : this._familyMap;
-				if (!familyMap.has(family)) {
-					familyMap.set(family, []);
+				if (model.is_chat_fallback && isChatModel) {
+					this._copilotUtilityModel = model;
 				}
-				familyMap.get(family)?.push(model);
+				const family = model.capabilities.family || model.id;
+				if (isChatModel) {
+					if (!this._familyMap.has(family)) {
+						this._familyMap.set(family, []);
+					}
+					this._familyMap.get(family)?.push(model);
+				}
+				if (isCompletionModel) {
+					if (!this._completionsFamilyMap.has(family)) {
+						this._completionsFamilyMap.set(family, []);
+					}
+					this._completionsFamilyMap.get(family)?.push(model);
+				}
 			}
 			this._lastFetchError = undefined;
 			this._onDidModelRefresh.fire();

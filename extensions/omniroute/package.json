@@ -57,9 +57,14 @@
 			},
 			{
 				"command": "omniroute.connectProvider",
-				"title": "Connect OmniProxy Provider",
-				"category": "OmniProxy",
+				"title": "Connect Provider",
+				"category": "OmniRoute",
 				"icon": "$(plug)"
+			},
+			{
+				"command": "omniroute.deleteProviderConnection",
+				"title": "Delete Provider Connection",
+				"category": "OmniRoute"
 			},
 			{
 				"command": "omniroute.syncModels",

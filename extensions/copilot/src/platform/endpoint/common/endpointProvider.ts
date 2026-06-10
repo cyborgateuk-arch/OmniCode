@@ -125,11 +125,11 @@ export type IChatModelInformation = IModelAPIResponse & {
 };
 
 export function isChatModelInformation(model: IModelAPIResponse): model is IChatModelInformation {
-	return model.capabilities.type === 'chat';
+	return model.capabilities?.type === 'chat';
 }
 
 export function isEmbeddingModelInformation(model: IModelAPIResponse): model is IEmbeddingModelInformation {
-	return model.capabilities.type === 'embeddings';
+	return model.capabilities?.type === 'embeddings';
 }
 
 export type IEmbeddingModelInformation = IModelAPIResponse & { capabilities: IEmbeddingModelCapabilities };
@@ -139,7 +139,7 @@ export type ICompletionModelInformation = IModelAPIResponse & {
 };
 
 export function isCompletionModelInformation(model: IModelAPIResponse): model is ICompletionModelInformation {
-	return model.capabilities.type === 'completion';
+	return model.capabilities?.type === 'completion' || model.capabilities?.type === 'chat';
 }
 
 export type ChatEndpointFamily = 'copilot-utility' | 'copilot-utility-small';

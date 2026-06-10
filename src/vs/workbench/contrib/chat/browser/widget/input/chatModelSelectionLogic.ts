@@ -113,6 +113,18 @@ export function findDefaultModel(
 
 	const score = (model: ILanguageModelChatMetadataAndIdentifier): number => {
 		let value = 0;
+		// Prefer omniproxy models explicitly
+		const vendor = model.metadata.vendor?.toLowerCase() || '';
+		const name = model.metadata.name?.toLowerCase() || '';
+		const id = model.identifier?.toLowerCase() || '';
+		
+		if (vendor.includes('omni') || id.includes('omni') || name.includes('omni') || vendor === 'customendpoint') {
+			value += 1000;
+		} else if (vendor !== 'copilot') {
+			// If not copilot, maybe it's from the azure vendor workaround or another local proxy
+			value += 500;
+		}
+
 		// All vendors scored equally — no vendor preferencing
 		if (model.metadata.isDefaultForLocation[location]) {
 			value += 10;

@@ -15,13 +15,22 @@ export async function* jsonlStreamToCompletions(jsonlStream: AsyncIterable<strin
 		}
 
 		if (line.startsWith('data: ')) {
-			const message: Completion & { error?: { message: string } } = JSON.parse(line.substring('data: '.length));
+			let message: any = JSON.parse(line.substring('data: '.length));
 
 			if (message.error) {
 				throw new Error(message.error.message);
 			}
 
-			yield message;
+			// Map chat completion delta to text completion format for compatibility
+			if (message.choices && message.choices.length > 0) {
+				for (const choice of message.choices) {
+					if (choice.delta && choice.delta.content !== undefined) {
+						choice.text = choice.delta.content;
+					}
+				}
+			}
+
+			yield message as Completion;
 		}
 	}
 }

@@ -399,6 +399,7 @@ export function buildModelPickerItems(
 	languageModelsService?: ILanguageModelsService,
 	openerService?: IOpenerService,
 	isUBB?: boolean,
+	commandService?: ICommandService,
 ): IActionListItem<IActionWidgetDropdownAction>[] {
 	const hiddenModelIds = languageModelsService?.getHiddenModelIds() || [];
 	models = models.filter(m => !hiddenModelIds.includes(m.identifier));
@@ -408,13 +409,17 @@ export function buildModelPickerItems(
 	const items: IActionListItem<IActionWidgetDropdownAction>[] = [];
 	if (models.length === 0) {
 		items.push(createModelItem({
-			id: 'auto',
+			id: 'connect',
 			enabled: true,
 			checked: true,
-			class: undefined,
-			tooltip: localize('chat.modelPicker.auto', "Auto"),
-			label: localize('chat.modelPicker.auto', "Auto"),
-			run: () => { }
+			class: ThemeIcon.asClassName(Codicon.plug),
+			tooltip: localize('chat.modelPicker.connect', "Connect Provider"),
+			label: localize('chat.modelPicker.connect', "Connect Provider"),
+			run: () => { 
+				if (commandService) {
+					commandService.executeCommand('omniroute.openControlCenter');
+				}
+			}
 		}));
 	}
 
@@ -1064,6 +1069,7 @@ export class ModelPickerWidget extends Disposable {
 			this._languageModelsService,
 			this._openerService,
 			isUBB,
+			this._commandService
 		);
 
 		// Collect all hover disposables so they are properly cleaned up when the
@@ -1160,7 +1166,9 @@ export class ModelPickerWidget extends Disposable {
 		if (statusIcon) {
 			nameChildren.push(renderIcon(statusIcon));
 		}
-		let modelLabel = name ?? localize('chat.modelPicker.auto', "Auto");
+		let modelLabel = name ?? (this._languageModelsService.getLanguageModelIds().length === 0 
+			? localize('chat.modelPicker.connect', "Connect Provider") 
+			: localize('chat.modelPicker.auto', "Auto"));
 		if (this._activeComboModel) {
 			modelLabel += ` (${this._activeComboModel})`;
 		}
