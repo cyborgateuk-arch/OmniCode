@@ -3327,9 +3327,36 @@ class OmniRouteService implements vscode.Disposable, vscode.TreeDataProvider<Tre
 		return 'node';
 	}
 
+	private getSystemNodePath(): string {
+		const candidates = [
+			process.env.HOME ? path.join(process.env.HOME, '.local/bin/node') : '',
+			process.env.HOME ? path.join(process.env.HOME, '.nvm/current/bin/node') : '',
+			'/opt/homebrew/bin/node',
+			'/usr/local/bin/node',
+		].filter(Boolean);
+
+		for (const candidate of candidates) {
+			if (fs.existsSync(candidate)) {
+				return candidate;
+			}
+		}
+
+		return 'node';
+	}
+
 	private getNpmPath(): string {
 		const configured = vscode.workspace.getConfiguration('omniroute').get<string>('npmPath', '/tmp/vscode-run-bin/npm');
-		return configured && fs.existsSync(configured) ? configured : 'npm';
+		if (configured && fs.existsSync(configured)) {
+			return configured;
+		}
+
+		for (const candidate of ['/opt/homebrew/bin/npm', '/usr/local/bin/npm']) {
+			if (fs.existsSync(candidate)) {
+				return candidate;
+			}
+		}
+
+		return 'npm';
 	}
 
 	private resolveRuntimeSecretOverrides(): NodeJS.ProcessEnv {
@@ -3747,10 +3774,12 @@ class OmniRouteService implements vscode.Disposable, vscode.TreeDataProvider<Tre
 			this.outputChannel.appendLine(`[${OMNIPROXY_BRAND_NAME}] reusing existing storage encryption key for embedded runtime`);
 		}
 
+		const systemNode = this.getSystemNodePath();
+		const customPath = [path.dirname(systemNode), process.env.PATH ?? ''].filter(Boolean).join(path.delimiter);
 		const env = {
 			...process.env,
 			...runtimeSecretOverrides,
-			PATH: `${path.dirname(this.getNodePath())}${path.delimiter}${process.env.PATH ?? ''}`,
+			PATH: customPath,
 			HOST: this.getBaseUrl().hostname,
 			PORT: this.getBaseUrl().port,
 			BASE_URL: this.getBaseUrl().toString(),
@@ -3760,12 +3789,13 @@ class OmniRouteService implements vscode.Disposable, vscode.TreeDataProvider<Tre
 			PRICING_SYNC_ENABLED: 'false',
 		};
 
-		this.outputChannel.appendLine(`[${OMNIPROXY_BRAND_NAME}] starting local server`);
-		this.childProcess = spawn(this.getNpmPath(), ['run', 'dev'], {
+		this.outputChannel.appendLine(`[${OMNIPROXY_BRAND_NAME}] starting local server via ${systemNode}`);
+		const nextBinPath = path.join(this.omniRouteRoot, 'node_modules', 'next', 'dist', 'bin', 'next');
+		this.childProcess = spawn(systemNode, [nextBinPath, 'dev'], {
 			cwd: this.omniRouteRoot,
 			env,
 			stdio: 'pipe',
-			shell: process.platform === 'win32'
+			shell: false
 		});
 		this.startedChild = true;
 
@@ -3774,6 +3804,12 @@ class OmniRouteService implements vscode.Disposable, vscode.TreeDataProvider<Tre
 		});
 		this.childProcess.stderr.on('data', chunk => {
 			this.outputChannel.append(chunk.toString());
+		});
+		this.childProcess.on('error', err => {
+			this.outputChannel.appendLine(`[${OMNIPROXY_BRAND_NAME}] failed to spawn server: ${err.message}`);
+			this.childProcess = undefined;
+			this.startedChild = false;
+			this.treeEmitter.fire(undefined);
 		});
 		this.childProcess.on('exit', code => {
 			this.outputChannel.appendLine(`[${OMNIPROXY_BRAND_NAME}] exited with code ${code ?? -1}`);
