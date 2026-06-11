@@ -560,25 +560,7 @@ export class ConfigureAgentModelAction extends Action2 {
 			f1: false,
 			icon: Codicon.settingsGear,
 			precondition: ChatContextKeys.enabled,
-			menu: [
-				{
-					id: MenuId.ChatInput,
-					order: 1.5,
-					when: ContextKeyExpr.and(
-						ChatContextKeys.enabled,
-						ChatContextKeys.location.isEqualTo(ChatAgentLocation.Chat),
-						ChatContextKeys.inQuickChat.negate(),
-						ContextKeyExpr.or(
-							ChatContextKeys.lockedToCodingAgent.negate(),
-							ChatContextKeys.chatSessionHasCustomAgentTarget),
-						// Show in welcome view for local sessions or sessions with custom agent target
-						ContextKeyExpr.or(
-							ChatContextKeys.inAgentSessionsWelcome.negate(),
-							ChatContextKeys.chatSessionHasCustomAgentTarget,
-							ChatContextKeys.agentSessionType.isEqualTo(AgentSessionProviders.Local))),
-					group: 'navigation',
-				},
-			]
+
 		});
 	}
 
